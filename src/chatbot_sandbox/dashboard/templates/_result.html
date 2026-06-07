@@ -1,0 +1,35 @@
+<div class="result-detail">
+  <div class="result-header">
+    <strong>{{ r.backend_name }}</strong>
+    <span class="muted">{{ r.model or "" }}</span>
+    <span class="muted">{{ r.latency_ms }}ms</span>
+  </div>
+
+  {% if r.error %}
+    <pre class="err">{{ r.error }}</pre>
+  {% else %}
+    <pre class="output">{{ r.output }}</pre>
+  {% endif %}
+
+  <div class="result-actions">
+    <form hx-post="/results/{{ r.id }}/tags" hx-target="closest .result-detail" hx-swap="outerHTML" class="inline">
+      <input type="text" name="tag" placeholder="add tag" autocomplete="off">
+      <button class="btn">tag</button>
+    </form>
+    <form hx-post="/results/{{ r.id }}/notes" hx-target="closest .result-detail" hx-swap="outerHTML" class="inline">
+      <input type="text" name="note" placeholder="add note" autocomplete="off">
+      <button class="btn">note</button>
+    </form>
+    <a class="btn"
+       hx-get="/diff?a={{ r.id }}&b=0"
+       hx-target="#diff-area"
+       hx-trigger="click">compare…</a>
+  </div>
+
+  {% if r.tag_list %}
+    <p>Tags: {% for t in r.tag_list %}<span class="tag">{{ t }}</span> {% endfor %}</p>
+  {% endif %}
+  {% if r.notes %}
+    <p class="muted">Note: {{ r.notes }}</p>
+  {% endif %}
+</div>

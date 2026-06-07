@@ -1,0 +1,11 @@
+<div class="diff-header">
+  Comparing <code>{{ a.backend_name }}#{{ a.id }}</code> ({{ a.prompt_id }}) ↔
+  <code>{{ b.backend_name }}#{{ b.id }}</code> ({{ b.prompt_id }})
+  <form hx-get="/diff" hx-target="#diff-area" hx-trigger="submit" class="inline">
+    <input type="hidden" name="a" value="{{ a.id }}">
+    <input type="number" name="b" value="{{ b.id }}" placeholder="other result id">
+    <button class="btn">go</button>
+  </form>
+</div>
+<pre class="diff">{% for line in diff_lines %}<span class="l-{{ line[0] if line else ' ' }}">{{ line }}</span>
+{% endfor %}</pre>

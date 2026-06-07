@@ -1,0 +1,40 @@
+<table class="table results" id="results-table">
+  <thead>
+    <tr>
+      <th>Result</th>
+      <th>Prompt</th>
+      <th>Backend</th>
+      <th>Status</th>
+      <th>Latency</th>
+      <th>In</th>
+      <th>Out</th>
+      <th>Cost</th>
+      <th>Tags</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in results %}
+    <tr class="result-row" id="row-{{ r.id }}" data-prompt="{{ r.prompt_id }}">
+      <td>#{{ r.id }}</td>
+      <td><code>{{ r.prompt_id }}</code></td>
+      <td><code>{{ r.backend_name }}</code></td>
+      <td>{% if r.error %}<span class="err">ERR</span>{% else %}<span class="ok">OK</span>{% endif %}</td>
+      <td>{{ r.latency_ms }}ms</td>
+      <td>{{ r.input_tokens or "—" }}</td>
+      <td>{{ r.output_tokens or "—" }}</td>
+      <td>{% if r.cost_usd is not none %}${{ "%.4f"|format(r.cost_usd) }}{% else %}—{% endif %}</td>
+      <td>
+        {% for t in r.tag_list %}<span class="tag">{{ t }}</span>{% endfor %}
+      </td>
+      <td>
+        <button class="btn"
+                hx-get="/results/{{ r.id }}"
+                hx-target="#detail-{{ r.id }}"
+                hx-swap="innerHTML">open</button>
+      </td>
+    </tr>
+    <tr class="detail-row"><td colspan="10"><div id="detail-{{ r.id }}"></div></td></tr>
+    {% endfor %}
+  </tbody>
+</table>

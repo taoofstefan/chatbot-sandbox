@@ -1,9 +1,10 @@
 backends:
-- name: ollama-llama3
-  type: ollama
-  model: llama3.1:8b
-  base_url: http://localhost:11434
-- name: openai-gpt4o-mini
-  type: openai
-  model: gpt-4o-mini
-  api_key_env: OPENAI_API_KEY
+  - name: ollama-llama3
+    type: ollama
+    model: llama3.1:8b
+    base_url: http://localhost:11434
+    api_key_env: OLLAMA_TOKEN
+  - name: openai-gpt4o-mini
+    type: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY

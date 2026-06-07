@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Tags · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>Tags</h1>
+{% if not tags %}
+  <p class="muted">No tags yet. Open a result and tag it.</p>
+{% else %}
+  <ul class="tag-list">
+    {% for t in tags %}
+    <li>
+      <a href="/tags/{{ t.tag }}"><code>{{ t.tag }}</code></a>
+      <span class="muted">({{ t.n }})</span>
+    </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}

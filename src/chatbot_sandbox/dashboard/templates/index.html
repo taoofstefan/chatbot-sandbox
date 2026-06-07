@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Runs · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>Recent runs</h1>
+{% if not runs %}
+  <p class="muted">No runs yet. Try <code>cbs run -p examples/prompts.yaml -b examples/backends.yaml</code>.</p>
+{% else %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Started</th>
+      <th>Finished</th>
+      <th>Prompt set</th>
+      <th>Backends</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in runs %}
+    <tr>
+      <td><a href="/runs/{{ r.id }}">#{{ r.id }}</a></td>
+      <td class="muted">{{ r.started_at }}</td>
+      <td class="muted">{{ r.finished_at or "—" }}</td>
+      <td>{{ r.prompt_set_name or "—" }}</td>
+      <td>
+        {% for b in r.backend_list %}<code>{{ b }}</code>{% if not loop.last %} {% endif %}{% endfor %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

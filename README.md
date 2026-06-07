@@ -14,7 +14,7 @@ uv sync
 # Scaffold sample prompt + backend files in the current directory
 uv run cbs init
 
-# Validate configs
+# Validate configs (also shows whether each backend's API key resolves)
 uv run cbs validate -p prompts.yaml -b backends.yaml
 
 # Preview the planned matrix without running it
@@ -37,6 +37,9 @@ uv run cbs note 7 "clean answer, fast"
 
 # Export to Markdown
 uv run cbs export 1 -o exports/run-1.md
+
+# Launch the web dashboard
+uv run cbs dashboard --port 8000
 ```
 
 ## Config files
@@ -101,6 +104,43 @@ The prompt text is sent on stdin for subprocess backends, which is the most port
 ## Storage
 
 All results land in a SQLite database (`results.db` by default). Schema is auto-created. Add tags, notes, export to markdown, replay a run against new backends.
+
+## API keys
+
+Multiple ways to provide a key per backend, in priority order:
+
+1. **`--api-key backend=value`** on the CLI (repeatable, highest priority)
+2. **`api_key`** literal in the backend's YAML entry
+3. **`api_key_env`** env var name → looked up in the process env
+4. **`.env` file** loaded via `--env-file` (existing process env wins)
+
+Ollama accepts the same key as a `Bearer` token when a remote Ollama is fronted
+by a reverse proxy that requires authentication.
+
+```bash
+# CLI override (one-off)
+uv run cbs run -p p.yaml -b b.yaml \
+    --api-key openai-gpt4o=sk-... \
+    --api-key ollama-llama3=mytoken
+
+# .env file
+cat > .env <<EOF
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+EOF
+
+uv run cbs run -p p.yaml -b b.yaml --env-file .env
+```
+
+## Dashboard
+
+`cbs dashboard` starts a small FastAPI + HTMX UI on `http://127.0.0.1:8000`.
+Features:
+
+- Browse runs, view summaries and full outputs
+- Tag and annotate results inline
+- Pick any two results and diff them
+- Filter by tag
 
 ## Development
 

@@ -11,12 +11,13 @@ from rich.table import Table
 
 from . import __version__
 from .backends import build_backend, known_types
-from .backends.base import BackendError
+from .backends.base import Backend, BackendError
 from .compare import diff_outputs, side_by_side, summary_table
-from .config import BackendSet, Prompt, PromptSet
+from .config import BackendConfig, BackendSet, Prompt, PromptSet
 from .db import Database
 from .export import export_markdown
 from .runner import RunContext, run_matrix
+from .secrets import KeyResolver, build_resolver, parse_key_override
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -30,6 +31,29 @@ DEFAULT_DB = Path("results.db")
 
 def _db(path: Path | None) -> Database:
     return Database(path or DEFAULT_DB)
+
+
+def _key_status(resolver: KeyResolver, cfg: BackendConfig) -> str:
+    """Return a short, masked description of how a backend's key resolves."""
+    key = resolver.resolve(cfg)
+    if not key:
+        return "[red]missing[/red]"
+    if len(key) <= 8:
+        return f"[green]{key[:2]}…[/green]"
+    return f"[green]{key[:4]}…{key[-2:]}[/green]"
+
+
+def _key_source(cfg: BackendConfig, resolver: KeyResolver) -> str:
+    """Describe where the key would come from (for diagnostic messages)."""
+    if cfg.name in resolver.overrides:
+        return "--api-key"
+    if cfg.api_key_env and resolver._lookup(cfg.api_key_env):
+        return f"env:{cfg.api_key_env}"
+    if cfg.api_key:
+        return "api_key literal in config"
+    if cfg.api_key_env:
+        return f"env:{cfg.api_key_env} (unset)"
+    return ""
 
 
 @app.command()
@@ -121,8 +145,24 @@ def run(
     db_path: Path | None = typer.Option(None, "--db", help="SQLite path."),
     notes: str = typer.Option("", "--notes", help="Free-form note attached to the run."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show matrix, do not execute."),
+    api_key: list[str] | None = typer.Option(
+        None,
+        "--api-key",
+        help="Override an API key: 'backend=value' (repeatable).",
+    ),
+    env_file: Path | None = typer.Option(
+        None,
+        "--env-file",
+        help="Load KEY=VALUE pairs from this file before resolving keys.",
+    ),
 ) -> None:
     """Run a prompt set against a set of backends."""
+    try:
+        overrides = parse_key_override(api_key)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
+    resolver = build_resolver(overrides=overrides, env_file=env_file)
+
     pset = PromptSet.from_yaml(prompts_file)
     bset = BackendSet.from_yaml(backends_file)
     backends_cfg = bset.find(only_backends)
@@ -140,8 +180,11 @@ def run(
     table.add_column("#", justify="right")
     table.add_column("Prompt")
     table.add_column("Backend")
+    table.add_column("Key")
     for i, (pid, bname) in enumerate(matrix, 1):
-        table.add_row(str(i), pid, bname)
+        cfg = next(b for b in backends_cfg if b.name == bname)
+        key_status = _key_status(resolver, cfg)
+        table.add_row(str(i), pid, bname, key_status)
     console.print(table)
 
     if dry_run:
@@ -152,10 +195,10 @@ def run(
     run_id = db.create_run(pset.name, [b.name for b in backends_cfg], notes=notes)
     console.print(f"[dim]run_id={run_id} db={db.path}[/dim]")
 
-    backends = []
+    backends: list[Backend] = []
     for cfg in backends_cfg:
         try:
-            backends.append(build_backend(cfg))
+            backends.append(build_backend(cfg, key_resolver=resolver))
         except BackendError as e:
             console.print(f"[red]skipping {cfg.name}: {e}[/red]")
 
@@ -290,33 +333,56 @@ def note(
 def replay(
     run_id: int = typer.Argument(..., help="Original run id to replay."),
     backends_file: Path = typer.Option(..., "--backends", "-b"),
+    prompts_file: Path | None = typer.Option(
+        None, "--prompts", "-p", help="Original prompts file (replay will use real text)."
+    ),
     parallel: int = typer.Option(1, "--parallel", "-j"),
     db_path: Path | None = typer.Option(None, "--db"),
     notes: str = typer.Option("", "--notes"),
+    api_key: list[str] | None = typer.Option(None, "--api-key"),
+    env_file: Path | None = typer.Option(None, "--env-file"),
 ) -> None:
-    """Replay the prompts of an old run against (possibly new) backends."""
+    """Replay the prompts of an old run against (possibly new) backends.
+
+    If --prompts is given, that file's prompts are used (matched by id). The
+    text from the original run is also stored as `original_prompt_text` for
+    reference, so a run can be replayed exactly even if the prompts file has
+    since been edited.
+    """
+    try:
+        overrides = parse_key_override(api_key)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
+    resolver = build_resolver(overrides=overrides, env_file=env_file)
+
     db = _db(db_path)
     original = db.get_run(run_id)
     if original is None:
         raise typer.BadParameter(f"no such run: {run_id}")
-    # Build a synthetic PromptSet from stored outputs' prompt_ids (text is lost -
-    # we can only replay by id). For true replay we re-read from the prompts
-    # file referenced at run time; here we warn and exit if unknown.
+
     prompt_ids = db.get_prompts_for_run(run_id)
     if not prompt_ids:
         raise typer.BadParameter("run has no results")
-    console.print(
-        f"[yellow]replay from run {run_id} lost original prompt text.[/yellow] "
-        f"Re-using stored prompt_ids: {prompt_ids}. Pass --prompts to override."
-    )
-    # Without the source text we build a minimal prompt set
-    replay_prompts: list[Prompt] = []
-    for pid in prompt_ids:
-        replay_prompts.append(Prompt(id=pid, text=f"[REPLAY:{pid}] original text not stored"))
-    pset = PromptSet(
-        name=f"replay-of-{run_id}",
-        prompts=replay_prompts,
-    )
+
+    if prompts_file is not None:
+        pset = PromptSet.from_yaml(prompts_file)
+        by_id = {p.id: p for p in pset.prompts}
+        replay_prompts = [by_id[pid] for pid in prompt_ids if pid in by_id]
+        missing = set(prompt_ids) - set(replay_prompts)
+        if missing:
+            raise typer.BadParameter(
+                f"prompts file is missing ids from the original run: {sorted(missing)}"
+            )
+    else:
+        console.print(
+            f"[yellow]replay from run {run_id} without --prompts; "
+            f"prompt text is not stored, only ids will be reused.[/yellow]"
+        )
+        replay_prompts = [
+            Prompt(id=pid, text=f"[REPLAY:{pid}] original text not stored")
+            for pid in prompt_ids
+        ]
+    pset = PromptSet(name=f"replay-of-{run_id}", prompts=replay_prompts)
     bset = BackendSet.from_yaml(backends_file)
     cfgs = bset.find(None)
 
@@ -325,7 +391,7 @@ def replay(
         [c.name for c in cfgs],
         notes=notes or f"replay of run {run_id}",
     )
-    backends = [build_backend(c) for c in cfgs]
+    backends = [build_backend(c, key_resolver=resolver) for c in cfgs]
     ctx = RunContext(run_id=new_run_id, db=db, parallel=parallel)
     run_matrix(pset.prompts, backends, cfgs, ctx)
     db.finish_run(new_run_id)
@@ -336,8 +402,21 @@ def replay(
 def validate(
     prompts_file: Path | None = typer.Option(None, "--prompts", "-p"),
     backends_file: Path | None = typer.Option(None, "--backends", "-b"),
+    api_key: list[str] | None = typer.Option(None, "--api-key"),
+    env_file: Path | None = typer.Option(None, "--env-file"),
 ) -> None:
-    """Validate prompt and/or backend YAML without running anything."""
+    """Validate prompt and/or backend YAML without running anything.
+
+    With --backends, also reports whether each backend's API key resolves
+    (and from which source: --api-key, .env file, api_key_env, or api_key
+    literal in config).
+    """
+    try:
+        overrides = parse_key_override(api_key)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
+    resolver = build_resolver(overrides=overrides, env_file=env_file)
+
     if prompts_file:
         ps = PromptSet.from_yaml(prompts_file)
         console.print(f"[green]ok[/green] prompts: {len(ps.prompts)} in set '{ps.name}'")
@@ -345,10 +424,36 @@ def validate(
         bs = BackendSet.from_yaml(backends_file)
         for b in bs.backends:
             try:
-                build_backend(b)
-                console.print(f"[green]ok[/green] backend: {b.name} ({b.type})")
+                build_backend(b, key_resolver=resolver)
             except BackendError as e:
                 console.print(f"[red]err[/red] {b.name}: {e}")
+                continue
+            key = resolver.resolve(b)
+            source = _key_source(b, resolver)
+            if key is None and b.type not in ("ollama", "command", "claude_cli", "codex_cli"):
+                console.print(
+                    f"[yellow]warn[/yellow] backend: {b.name} ({b.type}) — no key resolved; "
+                    f"{source or 'set api_key or api_key_env'}"
+                )
+            else:
+                console.print(
+                    f"[green]ok[/green] backend: {b.name} ({b.type}) key={_key_status(resolver, b)}"
+                )
+
+
+@app.command()
+def dashboard(
+    db_path: Path | None = typer.Option(None, "--db"),
+    host: str = typer.Option("127.0.0.1", "--host", "-h"),
+    port: int = typer.Option(8000, "--port", "-p"),
+    reload: bool = typer.Option(False, "--reload"),
+) -> None:
+    """Start a small web dashboard for browsing runs (FastAPI + HTMX)."""
+    from .dashboard import run_dashboard
+
+    db = _db(db_path)
+    console.print(f"[bold]dashboard[/bold] serving {db.path} at http://{host}:{port}")
+    run_dashboard(db.path, host=host, port=port, reload=reload)
 
 
 if __name__ == "__main__":

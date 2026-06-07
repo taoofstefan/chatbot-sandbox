@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from anthropic import Anthropic
 
-from .base import Backend, BackendError, RunResult, env_key
+from .base import Backend, BackendError, RunResult
 
 
 class AnthropicBackend(Backend):
     def _client(self) -> Anthropic:
-        api_key = env_key(self.config.api_key_env)
-        if not api_key:
-            raise BackendError("anthropic backend requires api_key_env pointing to a set env var")
-        kwargs: dict[str, object] = {"api_key": api_key, "timeout": self.config.timeout}
+        key = self.resolve_key()
+        if not key:
+            raise BackendError(
+                "anthropic backend requires an API key (set api_key, "
+                "api_key_env + env var, or --api-key override)"
+            )
+        kwargs: dict[str, object] = {"api_key": key, "timeout": self.config.timeout}
         if self.config.base_url:
             kwargs["base_url"] = self.config.base_url
         return Anthropic(**kwargs)  # type: ignore[arg-type]

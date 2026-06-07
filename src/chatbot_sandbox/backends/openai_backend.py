@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from openai import OpenAI
 
-from .base import Backend, BackendError, RunResult, env_key
+from .base import Backend, BackendError, RunResult
 
 
 class OpenAIBackend(Backend):
     def _client(self) -> OpenAI:
-        api_key = env_key(self.config.api_key_env) or "ollama"
-        kwargs: dict[str, object] = {"api_key": api_key, "timeout": self.config.timeout}
+        key = self.resolve_key() or "ollama"
+        kwargs: dict[str, object] = {"api_key": key, "timeout": self.config.timeout}
         if self.config.base_url:
             kwargs["base_url"] = self.config.base_url
         return OpenAI(**kwargs)  # type: ignore[arg-type]
@@ -25,7 +25,7 @@ class OpenAIBackend(Backend):
                     messages=[{"role": "user", "content": prompt}],
                     **self.config.options,
                 )
-            except Exception as e:  # SDK raises many exception types
+            except Exception as e:
                 return RunResult(
                     error=f"openai: {e}",
                     latency_ms=t.elapsed_ms,

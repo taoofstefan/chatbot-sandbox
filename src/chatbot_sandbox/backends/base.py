@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import BackendConfig
+
+if TYPE_CHECKING:
+    from ..secrets import KeyResolver
 
 
 class BackendError(RuntimeError):
@@ -34,16 +36,24 @@ class RunResult:
 class Backend:
     """Abstract base class for LLM backends."""
 
-    def __init__(self, config: BackendConfig) -> None:
+    def __init__(
+        self,
+        config: BackendConfig,
+        key_resolver: KeyResolver | None = None,
+    ) -> None:
         self.config = config
         self.name = config.name
         self.model = config.model
+        self.keys = key_resolver
+
+    def resolve_key(self) -> str | None:
+        if self.keys is None:
+            return None
+        return self.keys.resolve(self.config)
 
     def run(self, prompt: str) -> RunResult:
         """Execute the prompt and return a RunResult. Must be implemented."""
         raise NotImplementedError
-
-    # --- helpers ---
 
     def _time(self) -> _Timer:
         return _Timer()
@@ -64,10 +74,3 @@ class _Timer:
     @elapsed_ms.setter
     def elapsed_ms(self, value: int) -> None:
         self.elapsed_ms_value = value
-
-
-def env_key(name: str | None) -> str | None:
-    """Resolve an api_key_env name to its value, or None."""
-    if not name:
-        return None
-    return os.environ.get(name)

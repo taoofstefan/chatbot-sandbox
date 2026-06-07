@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..config import BackendConfig
+from ..secrets import KeyResolver
 from .anthropic_backend import AnthropicBackend
 from .base import Backend
 from .claude_cli import ClaudeCliBackend
@@ -25,8 +26,11 @@ def known_types() -> list[str]:
     return sorted(_REGISTRY)
 
 
-def build_backend(config: BackendConfig) -> Backend:
+def build_backend(
+    config: BackendConfig,
+    key_resolver: KeyResolver | None = None,
+) -> Backend:
     cls = _REGISTRY.get(config.type)
     if cls is None:
         raise ValueError(f"unknown backend type: {config.type}")
-    return cls(config)
+    return cls(config, key_resolver=key_resolver)

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Run #{{ run.id }} · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>Run #{{ run.id }} <small class="muted">{{ run.prompt_set_name or "" }}</small></h1>
+<dl class="meta">
+  <dt>Started</dt><dd>{{ run.started_at }}</dd>
+  <dt>Finished</dt><dd>{{ run.finished_at or "—" }}</dd>
+  <dt>Backends</dt><dd>{% for b in run.backend_list %}<code>{{ b }}</code> {% endfor %}</dd>
+  {% if run.notes %}<dt>Notes</dt><dd>{{ run.notes }}</dd>{% endif %}
+</dl>
+
+<h2>Summary</h2>
+{% include "_results.html" %}
+{% endblock %}
