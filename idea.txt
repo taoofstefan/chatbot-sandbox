@@ -1,0 +1,24 @@
+# Chatbot Sandbox
+This is a small tool for comparing how different models, CLIs, prompts, and routing setups behave on the same task.
+The simple version:
+Define a few test prompts.
+Run them through different backends: Ollama, OpenAI, Claude CLI, Codex CLI, local models, etc.
+Store prompt, model, output, latency, cost if known, and notes.
+Compare answers side by side.
+Add tags like coding, summarizing, creative, German, reasoning, too verbose, failed, good enough.
+Why it is useful for you:
+It gives you a structured way to burn through Ollama/model experiments without the result disappearing into random terminal history. You would learn the CLIs while also building your own model judgment dataset.
+Good MVP:
+CLI-first app.
+YAML/JSON prompt set.
+Run one prompt against several configured commands.
+Save results as markdown or SQLite.
+Simple web dashboard later.
+Nice features later:
+prompt versioning
+model scorecards
+“best cheap model for this task”
+diff view between model outputs
+replay a past test after model updates
+CLI command recipes for each model/tool
+This could become genuinely useful inside OpenClaw/agent workflows because model choice is already a recurring practical question.

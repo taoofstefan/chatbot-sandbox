@@ -1,0 +1,20 @@
+name: starter
+description: First sanity-check prompts
+prompts:
+- id: hello
+  text: Say hello in one short sentence.
+  tags:
+  - smoke
+- id: sum-lines
+  text: 'Summarize the following text in 3 bullets:
+
+
+    The quick brown fox jumps over the lazy dog. It then naps in the shade. The dog
+    is happy.'
+  tags:
+  - summarizing
+- id: german-rewrite
+  text: 'Translate to German: ''Good morning, how are you today?'''
+  tags:
+  - german
+  - translation

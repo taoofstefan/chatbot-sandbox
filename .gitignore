@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Distribution / build
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Project
+results.db
+results.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.local
+*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Exported reports (regenerable)
+exports/
