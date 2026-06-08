@@ -219,6 +219,20 @@ def test_schema_bad_kind_rejected() -> None:
     assert result.exit_code != 0
 
 
+def test_python_dash_m_entrypoint() -> None:
+    """The package is runnable as `python -m chatbot_sandbox`."""
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-m", "chatbot_sandbox", "version"],
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0
+    assert "chatbot-sandbox" in out.stdout
+
+
 def test_run_then_replay_uses_stored_prompt_text(tmp_path: Path) -> None:
     prompts = tmp_path / "prompts.yaml"
     backends = tmp_path / "backends.yaml"

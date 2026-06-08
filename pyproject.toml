@@ -4,11 +4,27 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chatbot-sandbox"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI tool for benchmarking prompts across different LLM backends"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+keywords = ["llm", "benchmark", "prompts", "ollama", "openai", "anthropic"]
+authors = [
+    { name = "Chatbot Sandbox Contributors" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "typer>=0.12",
     "rich>=13.7",
@@ -23,6 +39,12 @@ dependencies = [
     "python-multipart>=0.0.32",
 ]
 
+[project.urls]
+Homepage = "https://github.com/example/chatbot-sandbox"
+Repository = "https://github.com/example/chatbot-sandbox"
+Issues = "https://github.com/example/chatbot-sandbox/issues"
+Changelog = "https://github.com/example/chatbot-sandbox/blob/main/CHANGELOG.md"
+
 [project.scripts]
 cbs = "chatbot_sandbox.cli:app"
 
@@ -32,6 +54,9 @@ dev = [
     "mypy>=1.11",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "respx>=0.21.1",
+    "httpx>=0.28.1",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -60,11 +85,4 @@ asyncio_mode = "auto"
 filterwarnings = [
     "ignore::starlette.exceptions.StarletteDeprecationWarning",
     "ignore::DeprecationWarning:starlette.testclient",
-]
-
-[dependency-groups]
-dev = [
-    "httpx>=0.28.1",
-    "respx>=0.21.1",
-    "types-pyyaml>=6.0.12.20260518",
 ]

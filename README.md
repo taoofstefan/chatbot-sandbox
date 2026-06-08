@@ -4,8 +4,20 @@ A CLI-first tool for benchmarking prompts across LLM backends (Ollama, OpenAI, A
 
 ## Install
 
+From PyPI (when published):
+
 ```bash
-uv sync
+pip install chatbot-sandbox
+cbs --help
+# or, equivalently:
+python -m chatbot_sandbox --help
+```
+
+For local development:
+
+```bash
+uv sync --dev
+uv run cbs --help
 ```
 
 ## Quick start
@@ -138,15 +150,38 @@ uv run cbs run -p p.yaml -b b.yaml --env-file .env
 Features:
 
 - Browse runs, view summaries and full outputs
-- Tag and annotate results inline
+- Tag and annotate results inline (and now per-run notes too)
 - Pick any two results and diff them
 - Filter by tag
+- Substring search across all result outputs
+- Scorecard page aggregating results per prompt
+- Side-by-side compare view for one prompt across all backends
+- Start a new run from the browser (upload `prompts.yaml` + `backends.yaml`)
+
+## Editor autocompletion
+
+`cbs schema` emits a JSON Schema for the `prompts.yaml` and `backends.yaml`
+config models. Point your editor at the file to get field validation and
+autocomplete for the `type` enum and other fields.
+
+```bash
+cbs schema --out schemas.json
+# In VS Code, add to .vscode/settings.json:
+#   "yaml.schemas": { "schemas.json": ["*prompts.yaml", "*backends.yaml"] }
+```
 
 ## Development
 
 ```bash
-uv sync --extra dev
+uv sync --dev
 uv run ruff check .
 uv run mypy src
 uv run pytest
+```
+
+To build the wheel and sdist locally:
+
+```bash
+uv build
+ls dist/
 ```
