@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -192,7 +193,12 @@ def run(
         return
 
     db = _db(db_path)
-    run_id = db.create_run(pset.name, [b.name for b in backends_cfg], notes=notes)
+    run_id = db.create_run(
+        pset.name,
+        [b.name for b in backends_cfg],
+        notes=notes,
+        prompts=[{"id": p.id, "text": p.text} for p in prompts],
+    )
     console.print(f"[dim]run_id={run_id} db={db.path}[/dim]")
 
     backends: list[Backend] = []
@@ -344,10 +350,9 @@ def replay(
 ) -> None:
     """Replay the prompts of an old run against (possibly new) backends.
 
-    If --prompts is given, that file's prompts are used (matched by id). The
-    text from the original run is also stored as `original_prompt_text` for
-    reference, so a run can be replayed exactly even if the prompts file has
-    since been edited.
+    Prompt text is read from the original run's stored `prompts_json` first,
+    so a run can be replayed exactly even if the original prompts file has
+    since been edited. Pass --prompts to override (matched by id).
     """
     try:
         overrides = parse_key_override(api_key)
@@ -364,24 +369,41 @@ def replay(
     if not prompt_ids:
         raise typer.BadParameter("run has no results")
 
+    stored_prompts_json = original["prompts_json"]
+    if stored_prompts_json is None:
+        stored_prompts_json = ""
+    stored_prompts: list[Prompt] = []
+    if stored_prompts_json:
+        try:
+            stored_prompts = [
+                Prompt(id=p["id"], text=p["text"])
+                for p in json.loads(stored_prompts_json)
+            ]
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            raise typer.BadParameter(f"run {run_id} has malformed prompts_json: {e}") from None
+
+    stored_by_id = {p.id: p for p in stored_prompts}
+
     if prompts_file is not None:
         pset = PromptSet.from_yaml(prompts_file)
         by_id = {p.id: p for p in pset.prompts}
         replay_prompts = [by_id[pid] for pid in prompt_ids if pid in by_id]
-        missing = set(prompt_ids) - set(replay_prompts)
+        missing = set(prompt_ids) - {p.id for p in replay_prompts}
         if missing:
             raise typer.BadParameter(
                 f"prompts file is missing ids from the original run: {sorted(missing)}"
             )
+    elif stored_prompts:
+        replay_prompts = [stored_by_id[pid] for pid in prompt_ids if pid in stored_by_id]
+        missing = set(prompt_ids) - {p.id for p in replay_prompts}
+        if missing:
+            raise typer.BadParameter(
+                f"stored prompts missing ids from run {run_id}: {sorted(missing)}"
+            )
     else:
-        console.print(
-            f"[yellow]replay from run {run_id} without --prompts; "
-            f"prompt text is not stored, only ids will be reused.[/yellow]"
+        raise typer.BadParameter(
+            f"run {run_id} predates prompt-text storage; pass --prompts with the original file"
         )
-        replay_prompts = [
-            Prompt(id=pid, text=f"[REPLAY:{pid}] original text not stored")
-            for pid in prompt_ids
-        ]
     pset = PromptSet(name=f"replay-of-{run_id}", prompts=replay_prompts)
     bset = BackendSet.from_yaml(backends_file)
     cfgs = bset.find(None)
@@ -390,6 +412,7 @@ def replay(
         f"replay-of-{run_id}",
         [c.name for c in cfgs],
         notes=notes or f"replay of run {run_id}",
+        prompts=[{"id": p.id, "text": p.text} for p in replay_prompts],
     )
     backends = [build_backend(c, key_resolver=resolver) for c in cfgs]
     ctx = RunContext(run_id=new_run_id, db=db, parallel=parallel)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -63,6 +64,15 @@ class Database:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
             conn.commit()
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        if "prompts_json" not in cols:
+            conn.execute("ALTER TABLE runs ADD COLUMN prompts_json TEXT")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -80,12 +90,14 @@ class Database:
         prompt_set_name: str | None,
         backend_names: list[str],
         notes: str = "",
+        prompts: list[dict[str, str]] | None = None,
     ) -> int:
+        prompts_json = json.dumps(prompts) if prompts is not None else None
         with self.connect() as conn:
             cur = conn.execute(
-                "INSERT INTO runs (started_at, prompt_set_name, backend_names, notes) "
-                "VALUES (?, ?, ?, ?)",
-                (now_iso(), prompt_set_name, ",".join(backend_names), notes),
+                "INSERT INTO runs (started_at, prompt_set_name, backend_names, notes, prompts_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (now_iso(), prompt_set_name, ",".join(backend_names), notes, prompts_json),
             )
             assert cur.lastrowid is not None
             return int(cur.lastrowid)

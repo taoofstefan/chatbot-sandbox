@@ -1,11 +1,16 @@
 """Smoke tests for the CLI."""
 
+from __future__ import annotations
+
+import json
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from chatbot_sandbox.cli import app
 from chatbot_sandbox.config import BackendSet, Prompt, PromptSet
+from chatbot_sandbox.db import Database
 
 runner = CliRunner()
 
@@ -68,3 +73,103 @@ def test_backend_set_find(tmp_path: Path) -> None:
     bs = BackendSet.from_yaml(f)
     picked = bs.find(["b", "a"])
     assert [b.name for b in picked] == ["b", "a"]
+
+
+def test_run_then_replay_uses_stored_prompt_text(tmp_path: Path) -> None:
+    prompts = tmp_path / "prompts.yaml"
+    backends = tmp_path / "backends.yaml"
+    db_path = tmp_path / "r.db"
+
+    prompts.write_text(
+        "name: t\nprompts:\n  - id: a\n    text: ORIGINAL\n",
+        encoding="utf-8",
+    )
+    backends.write_text(
+        "backends:\n"
+        "  - name: echo\n"
+        "    type: command\n"
+        f"    command: ['{sys.executable}', '-c', 'import sys; print(sys.stdin.read().strip())']\n"
+        "    model: echo-v1\n",
+        encoding="utf-8",
+    )
+
+    run = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompts",
+            str(prompts),
+            "--backends",
+            str(backends),
+            "--db",
+            str(db_path),
+        ],
+    )
+    assert run.exit_code == 0, run.output
+
+    prompts.write_text(
+        "name: t\nprompts:\n  - id: a\n    text: EDITED\n",
+        encoding="utf-8",
+    )
+
+    replay = runner.invoke(
+        app,
+        [
+            "replay",
+            "1",
+            "--backends",
+            str(backends),
+            "--db",
+            str(db_path),
+        ],
+    )
+    assert replay.exit_code == 0, replay.output
+
+    db = Database(db_path)
+    new_run = db.get_run(2)
+    assert new_run is not None
+    assert new_run["prompts_json"] is not None
+    stored = json.loads(new_run["prompts_json"])
+    assert stored == [{"id": "a", "text": "ORIGINAL"}]
+
+
+def test_replay_without_stored_prompts_needs_prompts_arg(tmp_path: Path) -> None:
+    backends = tmp_path / "backends.yaml"
+    db_path = tmp_path / "r.db"
+    backends.write_text(
+        "backends:\n"
+        "  - name: echo\n"
+        "    type: command\n"
+        f"    command: ['{sys.executable}', '-c', 'pass']\n"
+        "    model: echo-v1\n",
+        encoding="utf-8",
+    )
+
+    db = Database(db_path)
+    run_id = db.create_run("old", ["echo"], notes="predates storage")
+    db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "a",
+            "backend_name": "echo",
+            "model": "echo-v1",
+            "output": "x",
+            "error": None,
+            "latency_ms": 1,
+        }
+    )
+    db.finish_run(run_id)
+
+    result = runner.invoke(
+        app,
+        [
+            "replay",
+            str(run_id),
+            "--backends",
+            str(backends),
+            "--db",
+            str(db_path),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "predates prompt-text storage" in result.output
