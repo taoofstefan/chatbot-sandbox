@@ -267,3 +267,67 @@ def test_run_create_bad_yaml_shows_error(tmp_path: Path) -> None:
         )
     assert r.status_code == 400
     assert "failed to parse upload" in r.text
+
+
+def test_search_finds_matching_output(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id = db.create_run("set", ["b1"])
+    db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "p1",
+            "backend_name": "b1",
+            "model": "m",
+            "output": "the quick brown fox",
+            "error": None,
+            "latency_ms": 1,
+        }
+    )
+    db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "p2",
+            "backend_name": "b1",
+            "model": "m",
+            "output": "hello world",
+            "error": None,
+            "latency_ms": 1,
+        }
+    )
+    db.finish_run(run_id)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/search?q=fox")
+    assert r.status_code == 200
+    assert "the quick brown fox" in r.text
+    assert "hello world" not in r.text
+
+
+def test_search_case_insensitive(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id = db.create_run("set", ["b1"])
+    db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "p1",
+            "backend_name": "b1",
+            "model": "m",
+            "output": "Hello World",
+            "error": None,
+            "latency_ms": 1,
+        }
+    )
+    db.finish_run(run_id)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/search?q=hello")
+    assert r.status_code == 200
+    assert "Hello World" in r.text
+
+
+def test_search_empty_query_shows_prompt(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/search")
+    assert r.status_code == 200
+    assert "Type a substring" in r.text

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Search · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>Search outputs</h1>
+
+<form action="/search" method="get" class="form">
+  <input type="search" name="q" value="{{ q }}" placeholder="substring to find…" autofocus>
+  <button class="btn" type="submit">search</button>
+</form>
+
+{% if q %}
+<p class="muted">
+  {{ results|length }} result{{ "" if results|length == 1 else "s" }} for
+  <code>{{ q }}</code>
+</p>
+
+{% if results %}
+<table class="table search">
+  <thead>
+    <tr>
+      <th>Result</th>
+      <th>Run</th>
+      <th>Prompt</th>
+      <th>Backend</th>
+      <th>Output excerpt</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in results %}
+    <tr>
+      <td>#{{ r.id }}</td>
+      <td><a href="/runs/{{ r.run_id }}">#{{ r.run_id }}</a></td>
+      <td><code>{{ r.prompt_id }}</code></td>
+      <td><code>{{ r.backend_name }}</code></td>
+      <td><pre class="output-snippet">{{ r.output[:160] if r.output else "" }}{% if r.output and r.output|length > 160 %}…{% endif %}</pre></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% else %}
+<p class="muted">Type a substring above. Match is case-insensitive over result outputs.</p>
+{% endif %}
+{% endblock %}

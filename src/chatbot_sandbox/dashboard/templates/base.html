@@ -15,6 +15,10 @@
       <a href="/runs/new">New</a>
       <a href="/scorecard">Scorecard</a>
       <a href="/tags">Tags</a>
+      <form action="/search" method="get" class="search-form">
+        <input type="search" name="q" placeholder="search outputs…" value="{{ q|default('') }}">
+        <button class="btn" type="submit">go</button>
+      </form>
     </nav>
     <span class="dbpath" title="{{ db_path }}">db: {{ db_path }}</span>
   </header>

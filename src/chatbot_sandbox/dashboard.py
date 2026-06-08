@@ -346,6 +346,33 @@ def create_app(db_path: Path) -> FastAPI:
             }
         )
 
+    @app.get("/search", response_class=HTMLResponse)
+    def search(
+        request: Request,
+        q: str = Query("", description="Substring to search in result outputs."),
+    ) -> HTMLResponse:
+        rows: list[sqlite3.Row] = []
+        if q.strip():
+            like = f"%{q.strip()}%"
+            with db.connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM results
+                    WHERE LOWER(output) LIKE LOWER(?)
+                    ORDER BY id DESC LIMIT 100
+                    """,
+                    (like,),
+                ).fetchall()
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(
+            request,
+            "search.html",
+            {
+                "q": q,
+                "results": [_result_to_dict(r) for r in rows],
+            },
+        )
+
     if _STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
