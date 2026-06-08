@@ -178,6 +178,47 @@ def test_diff_subcommand_bad_id(tmp_path: Path) -> None:
     assert "no such result" in result.output
 
 
+def test_schema_default_emits_both(tmp_path: Path) -> None:
+    out = tmp_path / "schema.json"
+    result = runner.invoke(app, ["schema", "--out", str(out)])
+    assert result.exit_code == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert "PromptSet" in data
+    assert "BackendSet" in data
+    assert "properties" in data["PromptSet"]
+
+
+def test_schema_prompts_only(tmp_path: Path) -> None:
+    out = tmp_path / "schema.json"
+    result = runner.invoke(app, ["schema", "--kind", "prompts", "--out", str(out)])
+    assert result.exit_code == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert list(data.keys()) == ["PromptSet"]
+
+
+def test_schema_backends_only(tmp_path: Path) -> None:
+    out = tmp_path / "schema.json"
+    result = runner.invoke(app, ["schema", "--kind", "backends", "--out", str(out)])
+    assert result.exit_code == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert list(data.keys()) == ["BackendSet"]
+    assert "ollama" in json.dumps(data)
+
+
+def test_schema_writes_to_file(tmp_path: Path) -> None:
+    out = tmp_path / "schema.json"
+    result = runner.invoke(app, ["schema", "--out", str(out)])
+    assert result.exit_code == 0
+    assert out.exists()
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert "PromptSet" in data and "BackendSet" in data
+
+
+def test_schema_bad_kind_rejected() -> None:
+    result = runner.invoke(app, ["schema", "--kind", "bogus"])
+    assert result.exit_code != 0
+
+
 def test_run_then_replay_uses_stored_prompt_text(tmp_path: Path) -> None:
     prompts = tmp_path / "prompts.yaml"
     backends = tmp_path / "backends.yaml"

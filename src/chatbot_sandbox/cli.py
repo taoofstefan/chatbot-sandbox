@@ -70,6 +70,37 @@ def types() -> None:
 
 
 @app.command()
+def schema(
+    kind: str = typer.Option(
+        "all",
+        "--kind",
+        "-k",
+        help="Which schema to emit: prompts, backends, or all.",
+    ),
+    out: Path | None = typer.Option(None, "--out", "-o", help="Write to file instead of stdout."),
+) -> None:
+    """Print JSON Schema for the YAML config files.
+
+    Useful for editor autocompletion (point your IDE at the schema
+    URI/file) and for validating configs from other tools.
+    """
+    if kind not in ("prompts", "backends", "all"):
+        raise typer.BadParameter("kind must be one of: prompts, backends, all")
+    schemas: dict[str, object] = {}
+    if kind in ("prompts", "all"):
+        schemas["PromptSet"] = PromptSet.model_json_schema()
+    if kind in ("backends", "all"):
+        schemas["BackendSet"] = BackendSet.model_json_schema()
+    payload = json.dumps(schemas, indent=2, sort_keys=False)
+    if out is None:
+        console.print(payload)
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(payload + "\n", encoding="utf-8")
+        console.print(f"wrote {out}")
+
+
+@app.command()
 def init(
     path: Path = typer.Argument(Path("."), help="Directory to scaffold example files into."),
 ) -> None:

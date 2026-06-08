@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
+
+BACKEND_TYPES: frozenset[str] = frozenset(
+    {"ollama", "openai", "anthropic", "claude_cli", "codex_cli", "command"}
+)
 
 
 class Prompt(BaseModel):
@@ -64,10 +69,23 @@ class BackendConfig(BaseModel):
     @field_validator("type")
     @classmethod
     def _validate_type(cls, v: str) -> str:
-        allowed = {"ollama", "openai", "anthropic", "claude_cli", "codex_cli", "command"}
-        if v not in allowed:
-            raise ValueError(f"backend type must be one of {sorted(allowed)}, got {v!r}")
+        if v not in BACKEND_TYPES:
+            raise ValueError(
+                f"backend type must be one of {sorted(BACKEND_TYPES)}, got {v!r}"
+            )
         return v
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: Mapping[str, Any], handler: Any
+    ) -> dict[str, Any]:
+        out: dict[str, Any] = dict(handler(schema))
+        if "properties" in out and "type" in out["properties"]:
+            out["properties"]["type"]["enum"] = sorted(BACKEND_TYPES)
+            out["properties"]["type"]["description"] = (
+                "Backend implementation: " + ", ".join(sorted(BACKEND_TYPES))
+            )
+        return out
 
 
 class BackendSet(BaseModel):
