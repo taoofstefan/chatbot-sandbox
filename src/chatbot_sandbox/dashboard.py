@@ -134,6 +134,26 @@ def create_app(db_path: Path) -> FastAPI:
             },
         )
 
+    @app.post("/runs/{run_id}/notes", response_class=HTMLResponse)
+    async def set_run_note(
+        request: Request,
+        run_id: int,
+        note: str = Form(...),
+    ) -> HTMLResponse:
+        note_text = note.strip()
+        if not note_text:
+            raise HTTPException(status_code=400, detail="empty note")
+        if db.get_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        db.set_run_notes(run_id, note_text)
+        run_row = db.get_run(run_id)
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(
+            request,
+            "_run_note.html",
+            {"run": _run_to_dict(run_row)},  # type: ignore[arg-type]
+        )
+
     @app.get("/runs/{run_id}/compare", response_class=HTMLResponse)
     def run_compare(
         request: Request,

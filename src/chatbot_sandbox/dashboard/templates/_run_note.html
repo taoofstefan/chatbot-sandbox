@@ -1,0 +1,9 @@
+<div class="run-note" id="run-note-{{ run.id }}">
+  {% if run.notes %}
+    <p><strong>Notes:</strong> {{ run.notes }}</p>
+  {% endif %}
+  <form hx-post="/runs/{{ run.id }}/notes" hx-target="#run-note-{{ run.id }}" hx-swap="outerHTML" class="inline">
+    <input type="text" name="note" placeholder="edit run note…" value="{{ run.notes or '' }}" autocomplete="off">
+    <button class="btn">save</button>
+  </form>
+</div>

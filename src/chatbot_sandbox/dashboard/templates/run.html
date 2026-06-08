@@ -6,8 +6,9 @@
   <dt>Started</dt><dd>{{ run.started_at }}</dd>
   <dt>Finished</dt><dd>{{ run.finished_at or "—" }}</dd>
   <dt>Backends</dt><dd>{% for b in run.backend_list %}<code>{{ b }}</code> {% endfor %}</dd>
-  {% if run.notes %}<dt>Notes</dt><dd>{{ run.notes }}</dd>{% endif %}
 </dl>
+
+{% include "_run_note.html" %}
 
 <h2>Summary</h2>
 {% include "_results.html" %}

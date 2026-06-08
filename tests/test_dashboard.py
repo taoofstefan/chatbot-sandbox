@@ -331,3 +331,33 @@ def test_search_empty_query_shows_prompt(tmp_path: Path) -> None:
     r = client.get("/search")
     assert r.status_code == 200
     assert "Type a substring" in r.text
+
+
+def test_run_note_roundtrip(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    _seed(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.post("/runs/1/notes", data={"note": "all good"})
+    assert r.status_code == 200
+    run_row = db.get_run(1)
+    assert run_row["notes"] == "all good"
+    r2 = client.get("/runs/1")
+    assert r2.status_code == 200
+    assert "all good" in r2.text
+    assert "edit run note" in r2.text
+
+
+def test_run_note_empty_rejected(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    Database(tmp_path / "r.db").create_run("set", ["b"])
+    client = TestClient(app)
+    r = client.post("/runs/1/notes", data={"note": "   "})
+    assert r.status_code == 400
+
+
+def test_run_note_missing_run(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.post("/runs/99/notes", data={"note": "x"})
+    assert r.status_code == 404

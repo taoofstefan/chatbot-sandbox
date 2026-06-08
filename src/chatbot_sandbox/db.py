@@ -149,6 +149,10 @@ class Database:
         with self.connect() as conn:
             conn.execute("UPDATE results SET notes = ? WHERE id = ?", (notes, result_id))
 
+    def set_run_notes(self, run_id: int, notes: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE runs SET notes = ? WHERE id = ?", (notes, run_id))
+
     def get_run(self, run_id: int) -> sqlite3.Row | None:
         with self.connect() as conn:
             return conn.execute(  # type: ignore[no-any-return]
