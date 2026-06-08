@@ -361,3 +361,16 @@ def test_run_note_missing_run(tmp_path: Path) -> None:
     client = TestClient(app)
     r = client.post("/runs/99/notes", data={"note": "x"})
     assert r.status_code == 404
+
+
+def test_user_tag_visible_on_result_render(tmp_path: Path) -> None:
+    """A user-added tag must show up in the rendered result detail."""
+    db = Database(tmp_path / "r.db")
+    _seed(db)
+    db.add_tag(1, "user-tag-xyz")
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.post("/results/1/tags", data={"tag": "another-user-tag"})
+    assert r.status_code == 200
+    assert "another-user-tag" in r.text
+    assert "user-tag-xyz" in r.text

@@ -196,3 +196,11 @@ class Database:
                 (run_id,),
             ).fetchall()
         return [r["prompt_id"] for r in rows]
+
+    def get_tags_for_result(self, result_id: int) -> list[str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT tag FROM tags WHERE result_id = ? ORDER BY tag",
+                (result_id,),
+            ).fetchall()
+        return [r["tag"] for r in rows]

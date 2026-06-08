@@ -130,7 +130,7 @@ def create_app(db_path: Path) -> FastAPI:
             "run.html",
             {
                 "run": _run_to_dict(run_row),
-                "results": [_result_to_dict(r) for r in results],
+                "results": [_result_to_dict(r, db) for r in results],
             },
         )
 
@@ -171,7 +171,7 @@ def create_app(db_path: Path) -> FastAPI:
         first_id = results[0]["id"]
         blocks: list[dict[str, Any]] = []
         for r in results:
-            d = _result_to_dict(r)
+            d = _result_to_dict(r, db)
             d["diff_partner_id"] = first_id
             blocks.append(d)
         templates_ = request.app.state.templates
@@ -231,7 +231,7 @@ def create_app(db_path: Path) -> FastAPI:
         return templates_.TemplateResponse(
             request,
             "_results.html",
-            {"results": [_result_to_dict(r) for r in results]},
+            {"results": [_result_to_dict(r, db) for r in results]},
         )
 
     @app.get("/results/{result_id}", response_class=HTMLResponse)
@@ -243,7 +243,7 @@ def create_app(db_path: Path) -> FastAPI:
         return templates_.TemplateResponse(
             request,
             "_result.html",
-            {"r": _result_to_dict(r)},
+            {"r": _result_to_dict(r, db)},
         )
 
     @app.get("/diff", response_class=HTMLResponse)
@@ -271,8 +271,8 @@ def create_app(db_path: Path) -> FastAPI:
             request,
             "_diff.html",
             {
-                "a": _result_to_dict(ra),
-                "b": _result_to_dict(rb),
+                "a": _result_to_dict(ra, db),
+                "b": _result_to_dict(rb, db),
                 "diff_lines": diff,
             },
         )
@@ -306,7 +306,7 @@ def create_app(db_path: Path) -> FastAPI:
         return templates_.TemplateResponse(
             request,
             "_tag_results.html",
-            {"tag": tag, "results": [_result_to_dict(r) for r in rows]},
+            {"tag": tag, "results": [_result_to_dict(r, db) for r in rows]},
         )
 
     @app.post("/results/{result_id}/tags", response_class=HTMLResponse)
@@ -326,7 +326,7 @@ def create_app(db_path: Path) -> FastAPI:
         return templates_.TemplateResponse(
             request,
             "_result.html",
-            {"r": _result_to_dict(r)},  # type: ignore[arg-type]
+            {"r": _result_to_dict(r, db)},  # type: ignore[arg-type]
         )
 
     @app.post("/results/{result_id}/notes", response_class=HTMLResponse)
@@ -346,7 +346,7 @@ def create_app(db_path: Path) -> FastAPI:
         return templates_.TemplateResponse(
             request,
             "_result.html",
-            {"r": _result_to_dict(r)},  # type: ignore[arg-type]
+            {"r": _result_to_dict(r, db)},  # type: ignore[arg-type]
         )
 
     @app.get("/api/runs", response_class=JSONResponse)
@@ -362,7 +362,7 @@ def create_app(db_path: Path) -> FastAPI:
         return JSONResponse(
             {
                 "run": _run_to_dict(run_row),
-                "results": [_result_to_dict(r) for r in results],
+                "results": [_result_to_dict(r, db) for r in results],
             }
         )
 
@@ -389,7 +389,7 @@ def create_app(db_path: Path) -> FastAPI:
             "search.html",
             {
                 "q": q,
-                "results": [_result_to_dict(r) for r in rows],
+                "results": [_result_to_dict(r, db) for r in rows],
             },
         )
 
@@ -412,12 +412,23 @@ def _run_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return d
 
 
-def _result_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _result_to_dict(row: sqlite3.Row, db: Database | None = None) -> dict[str, Any]:
     d = _row_to_dict(row)
+    prompt_tags: list[str] = []
     if isinstance(d.get("tags"), str):
-        d["tag_list"] = [t for t in d["tags"].split(",") if t]
-    else:
-        d["tag_list"] = []
+        prompt_tags = [t for t in d["tags"].split(",") if t]
+    user_tags: list[str] = []
+    if db is not None and d.get("id") is not None:
+        user_tags = db.get_tags_for_result(int(d["id"]))
+    seen: set[str] = set()
+    merged: list[str] = []
+    for t in prompt_tags + user_tags:
+        if t not in seen:
+            seen.add(t)
+            merged.append(t)
+    d["tag_list"] = merged
+    d["prompt_tag_list"] = prompt_tags
+    d["user_tag_list"] = user_tags
     return d
 
 

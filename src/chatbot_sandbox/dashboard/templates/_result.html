@@ -26,8 +26,11 @@
        hx-trigger="click">compare…</a>
   </div>
 
-  {% if r.tag_list %}
-    <p>Tags: {% for t in r.tag_list %}<span class="tag">{{ t }}</span> {% endfor %}</p>
+  {% if r.prompt_tag_list %}
+    <p>Prompt tags: {% for t in r.prompt_tag_list %}<span class="tag tag-prompt">{{ t }}</span> {% endfor %}</p>
+  {% endif %}
+  {% if r.user_tag_list %}
+    <p>Tags: {% for t in r.user_tag_list %}<span class="tag">{{ t }}</span> {% endfor %}</p>
   {% endif %}
   {% if r.notes %}
     <p class="muted">Note: {{ r.notes }}</p>
