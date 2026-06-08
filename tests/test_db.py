@@ -97,3 +97,58 @@ def test_migration_adds_prompts_json_to_existing_db(tmp_path: Path) -> None:
     assert legacy_run is not None
     assert legacy_run["prompts_json"] is None
 
+
+def test_user_version_starts_at_zero_on_new_db(tmp_path: Path) -> None:
+    db = Database(tmp_path / "fresh.db")
+    assert db.user_version() >= 2
+
+
+def test_migrations_applied_in_order(tmp_path: Path) -> None:
+    """New DB ends at the highest migration version; fresh rows are creatable."""
+    db = Database(tmp_path / "fresh.db")
+    final_version = db.user_version()
+    assert final_version >= 2
+    run_id = db.create_run(
+        "set",
+        ["b1"],
+        prompts=[{"id": "a", "text": "hi"}],
+    )
+    row = db.get_run(run_id)
+    assert row is not None
+    assert row["prompts_json"] is not None
+
+
+def test_legacy_db_with_prompts_json_stamps_to_v2(tmp_path: Path) -> None:
+    """DB that has both the runs table and prompts_json column (e.g. ad-hoc
+    migration from the pre-#12 era) gets stamped to v2 without re-adding
+    the column."""
+    import sqlite3
+
+    db_path = tmp_path / "legacy_v2.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            prompt_set_name TEXT,
+            backend_names TEXT NOT NULL,
+            notes TEXT DEFAULT '',
+            prompts_json TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO runs (started_at, backend_names, prompts_json) VALUES (?, ?, ?)",
+        ("2025-01-01T00:00:00Z", "b1", "[]"),
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(db_path)
+    assert db.user_version() == 2
+    row = db.get_run(1)
+    assert row is not None
+    assert row["prompts_json"] == "[]"
+

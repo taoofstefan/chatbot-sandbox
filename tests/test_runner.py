@@ -30,7 +30,7 @@ def _make_config(name: str) -> BackendConfig:
 
 
 def test_run_matrix_serial_baseline(tmp_path: Path) -> None:
-    """Serial run of 4 × 1s tasks takes ~4s; verifies the test scaffolding itself."""
+    """Serial run of 4 x 1s tasks takes ~4s; verifies the test scaffolding itself."""
     db = Database(tmp_path / "r.db")
     run_id = db.create_run("set", ["b1"])
     cfg = _make_config("b1")
@@ -46,7 +46,7 @@ def test_run_matrix_serial_baseline(tmp_path: Path) -> None:
 
 
 def test_run_matrix_parallel_faster_than_serial(tmp_path: Path) -> None:
-    """4 × 1s tasks with parallel=4 finishes in well under 4s (acceptance: < 2s)."""
+    """4 x 1s tasks with parallel=4 finishes in well under 4s (acceptance: < 2s)."""
     db = Database(tmp_path / "r.db")
     run_id = db.create_run("set", ["b1"])
     cfg = _make_config("b1")

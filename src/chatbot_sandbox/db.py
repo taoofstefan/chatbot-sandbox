@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -10,69 +11,80 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    prompt_set_name TEXT,
-    backend_names TEXT NOT NULL,
-    notes TEXT DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-    prompt_id TEXT NOT NULL,
-    backend_name TEXT NOT NULL,
-    model TEXT,
-    output TEXT,
-    error TEXT,
-    latency_ms INTEGER,
-    input_tokens INTEGER,
-    output_tokens INTEGER,
-    cost_usd REAL,
-    started_at TEXT NOT NULL,
-    tags TEXT DEFAULT '',
-    notes TEXT DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_results_run ON results(run_id);
-CREATE INDEX IF NOT EXISTS idx_results_prompt ON results(prompt_id);
-CREATE INDEX IF NOT EXISTS idx_results_backend ON results(backend_name);
-
-CREATE TABLE IF NOT EXISTS tags (
-    result_id INTEGER NOT NULL REFERENCES results(id) ON DELETE CASCADE,
-    tag TEXT NOT NULL,
-    PRIMARY KEY (result_id, tag)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
-"""
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+_MIGRATION_RE = re.compile(r"^(\d{4})_(.+)\.sql$")
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _load_migrations() -> list[tuple[int, str, Path]]:
+    """Return [(version, name, path), ...] sorted by version."""
+    out: list[tuple[int, str, Path]] = []
+    for path in MIGRATIONS_DIR.glob("*.sql"):
+        m = _MIGRATION_RE.match(path.name)
+        if m:
+            out.append((int(m.group(1)), m.group(2), path))
+    out.sort()
+    return out
+
+
+def _current_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute("PRAGMA user_version").fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _set_version(conn: sqlite3.Connection, version: int) -> None:
+    conn.execute(f"PRAGMA user_version = {int(version)}")
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r[1] == column for r in rows)
+
+
 class Database:
-    """Thin wrapper over sqlite3 with the schema above."""
+    """Thin wrapper over sqlite3 with file-based migrations."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
-            conn.executescript(SCHEMA)
-            conn.commit()
-            self._migrate(conn)
+            self._bootstrap_and_migrate(conn)
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
-        cols = {
-            row["name"]
-            for row in conn.execute("PRAGMA table_info(runs)").fetchall()
-        }
-        if "prompts_json" not in cols:
-            conn.execute("ALTER TABLE runs ADD COLUMN prompts_json TEXT")
+    def _bootstrap_and_migrate(self, conn: sqlite3.Connection) -> None:
+        """Apply pending migrations.
+
+        For a database created before the migration system existed, we
+        inspect the actual schema and stamp the appropriate starting
+        version, then apply anything newer.
+        """
+        version = _current_version(conn)
+        if version == 0 and _table_exists(conn, "runs"):
+            if _column_exists(conn, "runs", "prompts_json"):
+                _set_version(conn, 2)
+            else:
+                _set_version(conn, 1)
+            version = _current_version(conn)
+        for v, _name, path in _load_migrations():
+            if v > version:
+                sql = path.read_text(encoding="utf-8")
+                conn.executescript(sql)
+                _set_version(conn, v)
+                version = v
+
+    def user_version(self) -> int:
+        with self.connect() as conn:
+            return _current_version(conn)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
