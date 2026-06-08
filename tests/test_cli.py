@@ -53,6 +53,66 @@ def test_validate_backends_yaml(tmp_path: Path) -> None:
     assert "ok" in result.output
 
 
+def test_validate_warns_missing_key_with_env_var_name(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    f = tmp_path / "backends.yaml"
+    f.write_text(
+        "backends:\n"
+        "  - name: gpt\n"
+        "    type: openai\n"
+        "    model: gpt-4o-mini\n"
+        "    api_key_env: OPENAI_API_KEY\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["validate", "--backends", str(f)])
+    assert result.exit_code == 0
+    assert "warn" in result.output
+    assert "OPENAI_API_KEY" in result.output
+    assert "gpt" in result.output
+
+
+def test_validate_strict_fails_on_missing_key(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    f = tmp_path / "backends.yaml"
+    f.write_text(
+        "backends:\n"
+        "  - name: gpt\n"
+        "    type: openai\n"
+        "    model: gpt-4o-mini\n"
+        "    api_key_env: OPENAI_API_KEY\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["validate", "--backends", str(f), "--strict"])
+    assert result.exit_code == 1
+    assert "OPENAI_API_KEY" in result.output
+
+
+def test_validate_api_key_override_satisfies(tmp_path: Path) -> None:
+    f = tmp_path / "backends.yaml"
+    f.write_text(
+        "backends:\n"
+        "  - name: gpt\n"
+        "    type: openai\n"
+        "    model: gpt-4o-mini\n"
+        "    api_key_env: OPENAI_API_KEY\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "validate",
+            "--backends",
+            str(f),
+            "--api-key",
+            "gpt=sk-test",
+            "--strict",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "ok" in result.output
+    assert "warn" not in result.output
+
+
 def test_prompt_set_roundtrip() -> None:
     ps = PromptSet(
         name="n",

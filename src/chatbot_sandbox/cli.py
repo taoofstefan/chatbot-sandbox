@@ -445,12 +445,17 @@ def validate(
     backends_file: Path | None = typer.Option(None, "--backends", "-b"),
     api_key: list[str] | None = typer.Option(None, "--api-key"),
     env_file: Path | None = typer.Option(None, "--env-file"),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit with a non-zero status if any backend has a missing/unresolved key.",
+    ),
 ) -> None:
     """Validate prompt and/or backend YAML without running anything.
 
     With --backends, also reports whether each backend's API key resolves
     (and from which source: --api-key, .env file, api_key_env, or api_key
-    literal in config).
+    literal in config). Use --strict in CI to fail when keys are missing.
     """
     try:
         overrides = parse_key_override(api_key)
@@ -458,6 +463,7 @@ def validate(
         raise typer.BadParameter(str(e)) from None
     resolver = build_resolver(overrides=overrides, env_file=env_file)
 
+    warnings = 0
     if prompts_file:
         ps = PromptSet.from_yaml(prompts_file)
         console.print(f"[green]ok[/green] prompts: {len(ps.prompts)} in set '{ps.name}'")
@@ -468,18 +474,34 @@ def validate(
                 build_backend(b, key_resolver=resolver)
             except BackendError as e:
                 console.print(f"[red]err[/red] {b.name}: {e}")
+                warnings += 1
                 continue
             key = resolver.resolve(b)
             source = _key_source(b, resolver)
             if key is None and b.type not in ("ollama", "command", "claude_cli", "codex_cli"):
-                console.print(
-                    f"[yellow]warn[/yellow] backend: {b.name} ({b.type}) — no key resolved; "
-                    f"{source or 'set api_key or api_key_env'}"
-                )
+                hint = _missing_key_hint(b)
+                msg = f"backend: {b.name} ({b.type}) — no key resolved; {hint}"
+                if source:
+                    msg = f"backend: {b.name} ({b.type}) — {source} (unresolved); {hint}"
+                console.print(f"[yellow]warn[/yellow] {msg}")
+                warnings += 1
             else:
                 console.print(
                     f"[green]ok[/green] backend: {b.name} ({b.type}) key={_key_status(resolver, b)}"
                 )
+
+    if strict and warnings:
+        raise typer.Exit(code=1)
+
+
+def _missing_key_hint(cfg: BackendConfig) -> str:
+    """Return a concrete 'set VAR' hint naming the env var the backend wants."""
+    if cfg.api_key_env:
+        return f"set env var {cfg.api_key_env} (api_key_env) or pass --api-key {cfg.name}=…"
+    return (
+        f"set api_key or api_key_env on backend {cfg.name}, "
+        f"or pass --api-key {cfg.name}=…"
+    )
 
 
 @app.command()
