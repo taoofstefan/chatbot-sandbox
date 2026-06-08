@@ -55,6 +55,37 @@ def create_app(db_path: Path) -> FastAPI:
             },
         )
 
+    @app.get("/runs/{run_id}/compare", response_class=HTMLResponse)
+    def run_compare(
+        request: Request,
+        run_id: int,
+        prompt: str = Query(..., description="Prompt id to compare across backends"),
+    ) -> HTMLResponse:
+        run_row = db.get_run(run_id)
+        if run_row is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        results = [r for r in db.get_results(run_id) if r["prompt_id"] == prompt]
+        if not results:
+            raise HTTPException(
+                status_code=404, detail=f"no results for prompt '{prompt}' in run {run_id}"
+            )
+        first_id = results[0]["id"]
+        blocks: list[dict[str, Any]] = []
+        for r in results:
+            d = _result_to_dict(r)
+            d["diff_partner_id"] = first_id
+            blocks.append(d)
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(
+            request,
+            "compare.html",
+            {
+                "run": _run_to_dict(run_row),
+                "prompt_id": prompt,
+                "blocks": blocks,
+            },
+        )
+
     @app.get("/runs/{run_id}/results", response_class=HTMLResponse)
     def results_table(
         request: Request,

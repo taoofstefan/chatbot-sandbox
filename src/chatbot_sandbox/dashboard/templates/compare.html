@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Compare {{ prompt_id }} · Run #{{ run.id }}{% endblock %}
+{% block content %}
+<h1>Compare · <code>{{ prompt_id }}</code> <small class="muted">Run #{{ run.id }}</small></h1>
+<p class="muted">
+  {{ blocks|length }} backend{{ "" if blocks|length == 1 else "s" }} ran this prompt.
+  Click <em>diff vs first</em> on any block to compare it against the first sibling.
+</p>
+
+<div class="compare-blocks">
+  {% for b in blocks %}
+  <section class="compare-block" id="block-{{ b.id }}">
+    <header class="compare-header">
+      <strong>{{ b.backend_name }}</strong>
+      <span class="muted">{{ b.model or "" }}</span>
+      <span class="muted">{{ b.latency_ms }}ms</span>
+      {% if b.error %}<span class="err">ERR</span>{% else %}<span class="ok">OK</span>{% endif %}
+    </header>
+
+    {% if b.error %}
+      <pre class="err">{{ b.error }}</pre>
+    {% else %}
+      <pre class="output">{{ b.output }}</pre>
+    {% endif %}
+
+    <footer class="compare-footer">
+      <a class="btn" href="/diff?a={{ b.id }}&b={{ b.diff_partner_id }}">diff vs first</a>
+      <span class="muted">result #{{ b.id }}</span>
+    </footer>
+  </section>
+  {% endfor %}
+</div>
+
+<div id="diff-area"></div>
+{% endblock %}

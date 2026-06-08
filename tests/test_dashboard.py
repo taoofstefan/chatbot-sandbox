@@ -106,3 +106,37 @@ def test_diff_endpoint(tmp_path: Path) -> None:
     r = client.get(f"/diff?a={rid_a}&b={rid_b}")
     assert r.status_code == 200
     assert "diff-header" in r.text
+
+
+def test_compare_endpoint(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    rid_a, rid_b = _seed(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/runs/1/compare?prompt=p1")
+    assert r.status_code == 200
+    assert "compare-block" in r.text
+    assert "b1" in r.text
+    assert "b2" in r.text
+    assert "100ms" in r.text
+    assert "200ms" in r.text
+    assert "hello" in r.text
+    assert "world" in r.text
+    assert f'href="/diff?a={rid_a}&b={rid_a}"' in r.text
+    assert f'href="/diff?a={rid_b}&b={rid_a}"' in r.text
+
+
+def test_compare_endpoint_missing_prompt(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    _seed(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/runs/1/compare?prompt=does-not-exist")
+    assert r.status_code == 404
+
+
+def test_compare_endpoint_missing_run(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/runs/99/compare?prompt=p1")
+    assert r.status_code == 404
