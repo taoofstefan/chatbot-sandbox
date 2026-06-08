@@ -86,6 +86,39 @@ def create_app(db_path: Path) -> FastAPI:
             },
         )
 
+    @app.get("/scorecard", response_class=HTMLResponse)
+    def scorecard(request: Request) -> HTMLResponse:
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    r.prompt_id AS prompt_id,
+                    COUNT(*) AS backends_tested,
+                    SUM(CASE WHEN r.error IS NULL OR r.error = '' THEN 1 ELSE 0 END)
+                        AS ok_count,
+                    COALESCE(SUM(r.latency_ms), 0) AS total_latency_ms,
+                    COALESCE(SUM(r.cost_usd), 0.0) AS total_cost,
+                    (
+                        SELECT t.tag
+                        FROM tags t
+                        JOIN results r2 ON r2.id = t.result_id
+                        WHERE r2.prompt_id = r.prompt_id
+                        GROUP BY t.tag
+                        ORDER BY COUNT(*) DESC, t.tag ASC
+                        LIMIT 1
+                    ) AS top_tag
+                FROM results r
+                GROUP BY r.prompt_id
+                ORDER BY r.prompt_id
+                """
+            ).fetchall()
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(
+            request,
+            "scorecard.html",
+            {"rows": [dict(row) for row in rows]},
+        )
+
     @app.get("/runs/{run_id}/results", response_class=HTMLResponse)
     def results_table(
         request: Request,

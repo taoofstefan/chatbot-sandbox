@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Scorecard · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>Scorecard</h1>
+<p class="muted">One row per prompt, aggregated across all runs and backends.</p>
+
+{% if rows %}
+<table class="table scorecard">
+  <thead>
+    <tr>
+      <th>Prompt</th>
+      <th>Backends tested</th>
+      <th>OK</th>
+      <th>Total latency</th>
+      <th>Total cost</th>
+      <th>Top tag</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><code>{{ row.prompt_id }}</code></td>
+      <td>{{ row.backends_tested }}</td>
+      <td>{{ row.ok_count }}</td>
+      <td>{{ row.total_latency_ms }}ms</td>
+      <td>${{ "%.4f"|format(row.total_cost) }}</td>
+      <td>{% if row.top_tag %}<span class="tag">{{ row.top_tag }}</span>{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No results yet. Run a benchmark to populate the scorecard.</p>
+{% endif %}
+{% endblock %}

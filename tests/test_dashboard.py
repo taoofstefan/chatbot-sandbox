@@ -140,3 +140,61 @@ def test_compare_endpoint_missing_run(tmp_path: Path) -> None:
     client = TestClient(app)
     r = client.get("/runs/99/compare?prompt=p1")
     assert r.status_code == 404
+
+
+def test_scorecard_empty(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/scorecard")
+    assert r.status_code == 200
+    assert "No results yet" in r.text
+
+
+def test_scorecard_aggregates(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    rid_a, _ = _seed(db)
+    db.add_tag(rid_a, "good")
+    db.insert_result(
+        {
+            "run_id": 1,
+            "prompt_id": "p1",
+            "backend_name": "b1",
+            "model": "m1",
+            "output": "ok",
+            "error": None,
+            "latency_ms": 50,
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cost_usd": 0.001,
+        }
+    )
+    db.insert_result(
+        {
+            "run_id": 1,
+            "prompt_id": "p2",
+            "backend_name": "b1",
+            "model": "m1",
+            "output": None,
+            "error": "boom",
+            "latency_ms": 10,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost_usd": 0.0,
+        }
+    )
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/scorecard")
+    assert r.status_code == 200
+    assert "<code>p1</code>" in r.text
+    assert "<code>p2</code>" in r.text
+    assert "good" in r.text
+    body = r.text
+    p1_pos = body.find("<code>p1</code>")
+    p2_pos = body.find("<code>p2</code>")
+    p1_row = body[p1_pos:p2_pos]
+    assert "3" in p1_row
+    assert "350ms" in p1_row
+    assert "$" in p1_row
+    p2_row = body[p2_pos:]
+    assert "1" in p2_row
