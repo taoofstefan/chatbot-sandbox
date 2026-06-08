@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}New run · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>New run</h1>
+<p class="muted">Upload a prompts.yaml and backends.yaml, then start a benchmark.</p>
+
+{% if error %}
+<div class="err" role="alert">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/runs" enctype="multipart/form-data" class="form">
+  <label>
+    Prompts (YAML)
+    <input type="file" name="prompts_file" accept=".yaml,.yml" required>
+  </label>
+  <label>
+    Backends (YAML)
+    <input type="file" name="backends_file" accept=".yaml,.yml" required>
+  </label>
+  <label>
+    Notes
+    <input type="text" name="notes" placeholder="optional">
+  </label>
+  <label>
+    Parallel
+    <input type="number" name="parallel" value="1" min="1" max="32">
+  </label>
+  <button class="btn" type="submit">Start run</button>
+</form>
+
+<details>
+  <summary>YAML examples</summary>
+  <p>prompts.yaml:</p>
+  <pre>name: smoke
+prompts:
+  - id: hello
+    text: Say hello in one short sentence.
+  - id: sum
+    text: Summarize "The fox jumps." in 3 bullets.
+</pre>
+  <p>backends.yaml:</p>
+  <pre>backends:
+  - name: ollama-llama3
+    type: ollama
+    model: llama3.1:8b
+  - name: openai-gpt4o-mini
+    type: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+</pre>
+</details>
+{% endblock %}

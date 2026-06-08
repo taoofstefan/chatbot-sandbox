@@ -5,17 +5,31 @@
 from __future__ import annotations
 
 import difflib
+import shutil
 import sqlite3
+import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .config import BackendSet
+from .backends import build_backend
+from .config import BackendSet, PromptSet
 from .db import Database
+from .runner import RunContext, run_matrix
+from .secrets import build_resolver
 
 _TEMPLATES_DIR = Path(__file__).parent / "dashboard" / "templates"
 _STATIC_DIR = Path(__file__).parent / "dashboard" / "static"
@@ -39,6 +53,71 @@ def create_app(db_path: Path) -> FastAPI:
                 "db_path": str(db_path),
             },
         )
+
+    @app.get("/runs/new", response_class=HTMLResponse)
+    def run_new_form(request: Request) -> HTMLResponse:
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(request, "run_new.html", {"error": None})
+
+    @app.post("/runs")
+    async def run_create(
+        request: Request,
+        background: BackgroundTasks,
+        prompts_file: UploadFile = File(...),
+        backends_file: UploadFile = File(...),
+        notes: str = Form(""),
+        parallel: int = Form(1),
+    ) -> RedirectResponse:
+        tmp = Path(tempfile.mkdtemp(prefix="cbs-upload-"))
+        prompts_path = tmp / "prompts.yaml"
+        backends_path = tmp / "backends.yaml"
+        prompts_path.write_bytes(await prompts_file.read())
+        backends_path.write_bytes(await backends_file.read())
+
+        try:
+            pset = PromptSet.from_yaml(prompts_path)
+            bset = BackendSet.from_yaml(backends_path)
+        except Exception as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            templates_ = request.app.state.templates
+            return templates_.TemplateResponse(
+                request,
+                "run_new.html",
+                {"error": f"failed to parse upload: {e}"},
+                status_code=400,
+            )
+
+        resolver = build_resolver()
+        cfgs = bset.find(None)
+        try:
+            backends = [build_backend(c, key_resolver=resolver) for c in cfgs]
+        except Exception as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            templates_ = request.app.state.templates
+            return templates_.TemplateResponse(
+                request,
+                "run_new.html",
+                {"error": f"failed to build backend: {e}"},
+                status_code=400,
+            )
+
+        run_id = db.create_run(
+            pset.name,
+            [c.name for c in cfgs],
+            notes=notes,
+            prompts=[{"id": p.id, "text": p.text} for p in pset.prompts],
+        )
+
+        def _execute() -> None:
+            try:
+                ctx = RunContext(run_id=run_id, db=db, parallel=parallel)
+                run_matrix(pset.prompts, backends, cfgs, ctx)
+                db.finish_run(run_id)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+        background.add_task(_execute)
+        return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int) -> HTMLResponse:

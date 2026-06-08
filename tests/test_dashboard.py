@@ -198,3 +198,72 @@ def test_scorecard_aggregates(tmp_path: Path) -> None:
     assert "$" in p1_row
     p2_row = body[p2_pos:]
     assert "1" in p2_row
+
+
+def test_run_new_form_renders(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/runs/new")
+    assert r.status_code == 200
+    assert "New run" in r.text
+    assert 'enctype="multipart/form-data"' in r.text
+
+
+def test_run_create_redirects(tmp_path: Path) -> None:
+    import sys
+
+    db = Database(tmp_path / "r.db")
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    prompts = tmp_path / "prompts.yaml"
+    backends = tmp_path / "backends.yaml"
+    prompts.write_text(
+        "name: t\nprompts:\n  - id: a\n    text: hi\n", encoding="utf-8"
+    )
+    backends.write_text(
+        "backends:\n"
+        "  - name: echo\n"
+        "    type: command\n"
+        f"    command: ['{sys.executable}', '-c', 'pass']\n"
+        "    model: echo-v1\n",
+        encoding="utf-8",
+    )
+    with prompts.open("rb") as pf, backends.open("rb") as bf:
+        r = client.post(
+            "/runs",
+            files={
+                "prompts_file": ("prompts.yaml", pf, "application/x-yaml"),
+                "backends_file": ("backends.yaml", bf, "application/x-yaml"),
+            },
+            data={"notes": "from test", "parallel": "1"},
+            follow_redirects=False,
+        )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/runs/1"
+    run_row = db.get_run(1)
+    assert run_row is not None
+    assert run_row["notes"] == "from test"
+    import json
+    assert json.loads(run_row["prompts_json"]) == [{"id": "a", "text": "hi"}]
+
+
+def test_run_create_bad_yaml_shows_error(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    prompts = tmp_path / "prompts.yaml"
+    backends = tmp_path / "backends.yaml"
+    prompts.write_text("name: t\nprompts:\n  - {", encoding="utf-8")
+    backends.write_text(
+        "backends:\n  - name: b\n    type: ollama\n    model: m\n",
+        encoding="utf-8",
+    )
+    with prompts.open("rb") as pf, backends.open("rb") as bf:
+        r = client.post(
+            "/runs",
+            files={
+                "prompts_file": ("prompts.yaml", pf, "application/x-yaml"),
+                "backends_file": ("backends.yaml", bf, "application/x-yaml"),
+            },
+        )
+    assert r.status_code == 400
+    assert "failed to parse upload" in r.text
