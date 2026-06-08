@@ -336,6 +336,24 @@ def note(
 
 
 @app.command()
+def diff(
+    a: int = typer.Argument(..., help="First result id."),
+    b: int = typer.Argument(..., help="Second result id."),
+    db_path: Path | None = typer.Option(None, "--db"),
+    context: int = typer.Option(3, "--context", "-c", help="Diff context lines."),
+) -> None:
+    """Print a colored unified diff between two result outputs."""
+    db = _db(db_path)
+    ra = db.get_result(a)
+    rb = db.get_result(b)
+    if ra is None:
+        raise typer.BadParameter(f"no such result: {a}")
+    if rb is None:
+        raise typer.BadParameter(f"no such result: {b}")
+    diff_outputs(ra, rb, console, context=context)
+
+
+@app.command()
 def replay(
     run_id: int = typer.Argument(..., help="Original run id to replay."),
     backends_file: Path = typer.Option(..., "--backends", "-b"),

@@ -75,6 +75,49 @@ def test_backend_set_find(tmp_path: Path) -> None:
     assert [b.name for b in picked] == ["b", "a"]
 
 
+def test_diff_subcommand_prints_diff(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id = db.create_run("set", ["b1"])
+    rid_a = db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "p1",
+            "backend_name": "b1",
+            "model": "m",
+            "output": "hello world\nline two\n",
+            "error": None,
+            "latency_ms": 10,
+        }
+    )
+    rid_b = db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "p1",
+            "backend_name": "b2",
+            "model": "m",
+            "output": "hello WORLD\nline two\n",
+            "error": None,
+            "latency_ms": 20,
+        }
+    )
+    db.finish_run(run_id)
+    result = runner.invoke(
+        app, ["diff", str(rid_a), str(rid_b), "--db", str(tmp_path / "r.db")]
+    )
+    assert result.exit_code == 0, result.output
+    assert "hello world" in result.output
+    assert "hello WORLD" in result.output
+
+
+def test_diff_subcommand_bad_id(tmp_path: Path) -> None:
+    Database(tmp_path / "r.db")
+    result = runner.invoke(
+        app, ["diff", "99", "100", "--db", str(tmp_path / "r.db")]
+    )
+    assert result.exit_code != 0
+    assert "no such result" in result.output
+
+
 def test_run_then_replay_uses_stored_prompt_text(tmp_path: Path) -> None:
     prompts = tmp_path / "prompts.yaml"
     backends = tmp_path / "backends.yaml"
