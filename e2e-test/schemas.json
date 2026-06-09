@@ -1,0 +1,206 @@
+{
+  "PromptSet": {
+    "$defs": {
+      "Prompt": {
+        "description": "A single test prompt.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "Prompt",
+        "type": "object"
+      }
+    },
+    "description": "A named collection of prompts.",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "description": {
+        "default": "",
+        "title": "Description",
+        "type": "string"
+      },
+      "prompts": {
+        "items": {
+          "$ref": "#/$defs/Prompt"
+        },
+        "title": "Prompts",
+        "type": "array"
+      }
+    },
+    "required": [
+      "name",
+      "prompts"
+    ],
+    "title": "PromptSet",
+    "type": "object"
+  },
+  "BackendSet": {
+    "$defs": {
+      "BackendConfig": {
+        "description": "Configuration for a single backend instance.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "description": "Backend implementation: anthropic, claude_cli, codex_cli, command, ollama, openai",
+            "enum": [
+              "anthropic",
+              "claude_cli",
+              "codex_cli",
+              "command",
+              "ollama",
+              "openai"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Url"
+          },
+          "api_key_env": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Api Key Env"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Api Key"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          },
+          "timeout": {
+            "default": 120.0,
+            "title": "Timeout",
+            "type": "number"
+          },
+          "cost_per_1k_input": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cost Per 1K Input"
+          },
+          "cost_per_1k_output": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cost Per 1K Output"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "BackendConfig",
+        "type": "object"
+      }
+    },
+    "description": "A collection of backend configurations.",
+    "properties": {
+      "backends": {
+        "items": {
+          "$ref": "#/$defs/BackendConfig"
+        },
+        "title": "Backends",
+        "type": "array"
+      }
+    },
+    "required": [
+      "backends"
+    ],
+    "title": "BackendSet",
+    "type": "object"
+  }
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -93,3 +94,33 @@ def test_run_matrix_results_persisted(tmp_path: Path) -> None:
     by_prompt = {r["prompt_id"]: r for r in rows}
     assert by_prompt["a"]["output"] == "echo:x"
     assert by_prompt["b"]["output"] == "echo:y"
+
+
+def test_run_matrix_grades_outputs_against_validators(tmp_path: Path) -> None:
+    """If a prompt has validators, the runner writes a validation report
+    into the results row. A `FixedOutputBackend` returns a known string so
+    we can assert the validator's verdict without coupling to the test
+    backend's echo format."""
+
+    class FixedOutputBackend(Backend):
+        def __init__(self, config: BackendConfig, text: str) -> None:
+            super().__init__(config)
+            self.text = text
+
+        def run(self, prompt: str) -> RunResult:
+            return RunResult(output=self.text, model=self.model)
+
+    db = Database(tmp_path / "r.db")
+    run_id = db.create_run("set", ["b1"])
+    cfg = _make_config("b1")
+    backend = FixedOutputBackend(cfg, text="3")
+    prompts = [
+        Prompt(id="match", text="?", validators={"equals": "3"}),
+        Prompt(id="miss", text="?", validators={"equals": "4"}),
+    ]
+    ctx = RunContext(run_id=run_id, db=db, parallel=1)
+    run_matrix(prompts, [backend], [cfg], ctx)
+
+    rows = {r["prompt_id"]: r for r in db.get_results(run_id)}
+    assert json.loads(rows["match"]["validation_json"])["equals"]["passed"] is True
+    assert json.loads(rows["miss"]["validation_json"])["equals"]["passed"] is False

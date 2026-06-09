@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from rich.progress import (
 from .backends import Backend
 from .config import BackendConfig, Prompt
 from .db import Database, now_iso
+from .graders import grade as grade_output
 
 
 @dataclass
@@ -76,6 +78,12 @@ def _execute_one(
     }
     result_id = ctx.db.insert_result(row)
     row["id"] = result_id
+
+    # Grade against inline validators, if any. Skip when the model errored.
+    if prompt.validators and not row["error"]:
+        report = grade_output(str(row["output"] or ""), prompt.validators)
+        row["validation"] = report
+        ctx.db.set_validation(result_id, json.dumps(report))
     return row
 
 

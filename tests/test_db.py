@@ -100,14 +100,14 @@ def test_migration_adds_prompts_json_to_existing_db(tmp_path: Path) -> None:
 
 def test_user_version_starts_at_zero_on_new_db(tmp_path: Path) -> None:
     db = Database(tmp_path / "fresh.db")
-    assert db.user_version() >= 2
+    assert db.user_version() >= 3
 
 
 def test_migrations_applied_in_order(tmp_path: Path) -> None:
     """New DB ends at the highest migration version; fresh rows are creatable."""
     db = Database(tmp_path / "fresh.db")
     final_version = db.user_version()
-    assert final_version >= 2
+    assert final_version >= 3
     run_id = db.create_run(
         "set",
         ["b1"],
@@ -116,6 +116,30 @@ def test_migrations_applied_in_order(tmp_path: Path) -> None:
     row = db.get_run(run_id)
     assert row is not None
     assert row["prompts_json"] is not None
+
+
+def test_validation_json_round_trip(tmp_path: Path) -> None:
+    """`set_validation` writes to the validation_json column and the row reads it back."""
+    db = Database(tmp_path / "r.db")
+    run_id = db.create_run("set", ["b1"], prompts=[{"id": "p", "text": "x"}])
+    rid = db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "p",
+            "backend_name": "b1",
+            "output": "ok",
+            "error": None,
+            "latency_ms": 1,
+            "tags": [],
+        }
+    )
+    report = json.dumps({"contains": {"passed": True, "detail": "ok"}})
+    db.set_validation(rid, report)
+    row = db.get_result(rid)
+    assert row is not None
+    assert row["validation_json"] == report
+    parsed = json.loads(row["validation_json"])
+    assert parsed["contains"]["passed"] is True
 
 
 def test_legacy_db_with_prompts_json_stamps_to_v2(tmp_path: Path) -> None:
@@ -147,7 +171,9 @@ def test_legacy_db_with_prompts_json_stamps_to_v2(tmp_path: Path) -> None:
     conn.close()
 
     db = Database(db_path)
-    assert db.user_version() == 2
+    # v3 and v4 are no-ops on this legacy DB (no `results` table) but the
+    # version is still bumped to record that the migrations were attempted.
+    assert db.user_version() >= 4
     row = db.get_run(1)
     assert row is not None
     assert row["prompts_json"] == "[]"

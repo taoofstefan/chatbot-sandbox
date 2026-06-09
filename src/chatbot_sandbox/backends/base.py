@@ -36,6 +36,10 @@ class RunResult:
 class Backend:
     """Abstract base class for LLM backends."""
 
+    #: Whether this backend supports multi-turn chat with tool calls.
+    #: Subclasses set this to True if they implement `chat()`.
+    supports_chat: bool = False
+
     def __init__(
         self,
         config: BackendConfig,
@@ -55,8 +59,37 @@ class Backend:
         """Execute the prompt and return a RunResult. Must be implemented."""
         raise NotImplementedError
 
+    def chat(
+        self,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]] | None = None,
+    ) -> ChatResponse:
+        """Multi-turn chat. Default raises NotImplementedError.
+
+        Subclasses that set `supports_chat = True` must override this.
+        `messages` is the chat history (role/content/dict-shaped items).
+        `tools` is a list of JSON-Schema tool definitions; None means no
+        tools (pure chat). The returned `ChatResponse` carries the
+        assistant message and any parsed tool calls.
+        """
+        raise NotImplementedError("this backend does not implement chat()")
+
     def _time(self) -> _Timer:
         return _Timer()
+
+
+@dataclass
+class ChatResponse:
+    """Outcome of a `Backend.chat()` call.
+
+    Mirrors the agent-side `ModelResponse` but stays in the backends
+    package so we don't create a circular import. The driver converts
+    one into the other.
+    """
+
+    content: str = ""
+    tool_calls: list[dict[str, object]] = field(default_factory=list)
+    raw: dict[str, object] = field(default_factory=dict)
 
 
 class _Timer:

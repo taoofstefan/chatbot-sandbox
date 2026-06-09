@@ -13,6 +13,55 @@ BACKEND_TYPES: frozenset[str] = frozenset(
     {"ollama", "openai", "anthropic", "claude_cli", "codex_cli", "command"}
 )
 
+KNOWN_AGENT_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_dir",
+        "read_file",
+        "edit_file",
+        "write_file",
+        "search_files",
+        "run_shell",
+        "draft_message",
+        "approve_message",
+        "send_message",
+    }
+)
+
+
+class AgentConfig(BaseModel):
+    """Agentic-mode settings for a prompt.
+
+    When `Prompt.agent` is set, the agent driver loop is used instead of
+    a single chat call. A prompt without `agent:` falls back to the
+    existing single-turn path; this is fully backwards-compatible.
+    """
+
+    tools: list[str]
+    max_steps: int = 15
+    step_timeout_s: int = 30
+    workdir: str | None = None
+    commit_required: bool = False
+    use_native_tool_calling: bool | None = None
+
+    @field_validator("tools")
+    @classmethod
+    def _tools_known(cls, v: list[str]) -> list[str]:
+        unknown = [t for t in v if t not in KNOWN_AGENT_TOOLS]
+        if unknown:
+            raise ValueError(
+                f"unknown agent tool(s) {unknown}; known: {sorted(KNOWN_AGENT_TOOLS)}"
+            )
+        if not v:
+            raise ValueError("agent.tools must list at least one tool")
+        return v
+
+    @field_validator("max_steps")
+    @classmethod
+    def _max_steps_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("max_steps must be >= 1")
+        return v
+
 
 class Prompt(BaseModel):
     """A single test prompt."""
@@ -21,12 +70,34 @@ class Prompt(BaseModel):
     text: str
     tags: list[str] = Field(default_factory=list)
     notes: str = ""
+    validators: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Optional inline assertions evaluated against each model output. "
+            "Keys are check names (see chatbot_sandbox.graders), values are "
+            "the expected value or a list of arguments."
+        ),
+    )
+    agent: AgentConfig | None = None
 
     @field_validator("id")
     @classmethod
     def _id_not_empty(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("prompt id must not be empty")
+        return v
+
+    @field_validator("validators")
+    @classmethod
+    def _validators_known(cls, v: dict[str, Any]) -> dict[str, Any]:
+        # Imported lazily to keep config.py free of runtime dependencies.
+        from .graders import KNOWN_CHECKS
+
+        unknown = [k for k in v if k not in KNOWN_CHECKS]
+        if unknown:
+            raise ValueError(
+                f"unknown validator(s) {unknown}; known: {sorted(KNOWN_CHECKS)}"
+            )
         return v
 
 

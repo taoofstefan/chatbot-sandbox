@@ -3,10 +3,46 @@
 from __future__ import annotations
 
 import difflib
+import json
 import sqlite3
 
 from rich.console import Console
 from rich.table import Table
+
+
+def _validation_inline(row: sqlite3.Row) -> str:
+    """Render validation as a single grey line, e.g. `[validate] 2/3 pass`."""
+    raw = row["validation_json"]
+    if not raw:
+        return ""
+    try:
+        report = json.loads(raw)
+    except (ValueError, TypeError):
+        return ""
+    if not report:
+        return ""
+    passed = sum(1 for c in report.values() if c.get("passed"))
+    total = len(report)
+    color = "green" if passed == total else "red"
+    return f"  [dim][validate][/dim] [{color}]{passed}/{total} pass[/{color}]"
+
+
+def _validation_cell(row: sqlite3.Row) -> str:
+    """Render the validation_json column for the summary table."""
+    raw = row["validation_json"]
+    if not raw:
+        return "-"
+    try:
+        report = json.loads(raw)
+    except (ValueError, TypeError):
+        return "?"
+    if not report:
+        return "-"
+    passed = sum(1 for c in report.values() if c.get("passed"))
+    total = len(report)
+    if passed == total:
+        return f"[green]{passed}/{total}[/green]"
+    return f"[red]{passed}/{total}[/red]"
 
 
 def summary_table(results: list[sqlite3.Row], console: Console) -> None:
@@ -18,6 +54,7 @@ def summary_table(results: list[sqlite3.Row], console: Console) -> None:
     table.add_column("In", justify="right")
     table.add_column("Out", justify="right")
     table.add_column("Cost", justify="right")
+    table.add_column("Val", justify="right")
 
     for r in results:
         status = "[red]ERR[/red]" if r["error"] else "[green]OK[/green]"
@@ -32,6 +69,7 @@ def summary_table(results: list[sqlite3.Row], console: Console) -> None:
             in_t,
             out_t,
             cost,
+            _validation_cell(r),
         )
     console.print(table)
 
@@ -54,6 +92,9 @@ def side_by_side(results: list[sqlite3.Row], console: Console, max_width: int = 
                     + (f", {r['input_tokens']}+{r['output_tokens']} tok" if r["input_tokens"] else "")
                     + ")"
                 )
+                val_line = _validation_inline(r)
+                if val_line:
+                    console.print(val_line)
                 out = r["output"] or ""
                 if len(out) > 2000:
                     out = out[:2000] + "\n... [truncated]"

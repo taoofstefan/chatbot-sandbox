@@ -21,12 +21,14 @@ CREATE TABLE IF NOT EXISTS results (
     cost_usd REAL,
     started_at TEXT NOT NULL,
     tags TEXT DEFAULT '',
-    notes TEXT DEFAULT ''
+    notes TEXT DEFAULT '',
+    validation_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_results_run ON results(run_id);
 CREATE INDEX IF NOT EXISTS idx_results_prompt ON results(prompt_id);
 CREATE INDEX IF NOT EXISTS idx_results_backend ON results(backend_name);
+CREATE INDEX IF NOT EXISTS idx_results_validation ON results(run_id, prompt_id);
 
 CREATE TABLE IF NOT EXISTS tags (
     result_id INTEGER NOT NULL REFERENCES results(id) ON DELETE CASCADE,

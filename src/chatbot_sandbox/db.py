@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,9 +78,25 @@ class Database:
         for v, _name, path in _load_migrations():
             if v > version:
                 sql = path.read_text(encoding="utf-8")
-                conn.executescript(sql)
+                self._apply_migration(conn, v, sql)
                 _set_version(conn, v)
                 version = v
+
+    def _apply_migration(self, conn: sqlite3.Connection, version: int, sql: str) -> None:
+        """Apply one migration, with per-version guards for legacy schemas."""
+        if version == 3:
+            # 0003 adds results.validation_json. Skip the ALTER TABLE on a
+            # database that pre-dates the results table (e.g. legacy v1 DBs
+            # that only have the runs table).
+            if _table_exists(conn, "results"):
+                if not _column_exists(conn, "results", "validation_json"):
+                    conn.execute("ALTER TABLE results ADD COLUMN validation_json TEXT")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_results_validation "
+                    "ON results(run_id, prompt_id)"
+                )
+            return
+        conn.executescript(sql)
 
     def user_version(self) -> int:
         with self.connect() as conn:
@@ -128,8 +144,8 @@ class Database:
                 INSERT INTO results (
                     run_id, prompt_id, backend_name, model, output, error,
                     latency_ms, input_tokens, output_tokens, cost_usd,
-                    started_at, tags, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    started_at, tags, notes, validation_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     result["run_id"],
@@ -145,10 +161,18 @@ class Database:
                     result.get("started_at", now_iso()),
                     ",".join(result.get("tags", [])),
                     result.get("notes", ""),
+                    result.get("validation_json"),
                 ),
             )
             assert cur.lastrowid is not None
             return int(cur.lastrowid)
+
+    def set_validation(self, result_id: int, validation_json: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE results SET validation_json = ? WHERE id = ?",
+                (validation_json, result_id),
+            )
 
     def add_tag(self, result_id: int, tag: str) -> None:
         with self.connect() as conn:
@@ -204,3 +228,187 @@ class Database:
                 (result_id,),
             ).fetchall()
         return [r["tag"] for r in rows]
+
+    # ------------------------------------------------------------------
+    # Agentic-run persistence (migration 0004)
+    # ------------------------------------------------------------------
+
+    def create_agent_run(
+        self,
+        run_id: int,
+        prompt_id: str,
+        backend_name: str,
+        *,
+        final_answer: str | None = None,
+        total_steps: int = 0,
+        completed_normally: bool = False,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        final_messages_json: str | None = None,
+    ) -> int:
+        """Insert a new agent_runs row. Returns the new id."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO agent_runs (
+                    run_id, prompt_id, backend_name, final_answer,
+                    total_steps, completed_normally,
+                    started_at, finished_at, final_messages_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    prompt_id,
+                    backend_name,
+                    final_answer,
+                    total_steps,
+                    1 if completed_normally else 0,
+                    started_at or now_iso(),
+                    finished_at,
+                    final_messages_json,
+                ),
+            )
+            assert cur.lastrowid is not None
+            return int(cur.lastrowid)
+
+    def finish_agent_run(
+        self,
+        agent_run_id: int,
+        *,
+        final_answer: str | None,
+        total_steps: int,
+        completed_normally: bool,
+        final_messages_json: str | None = None,
+    ) -> None:
+        """Update an agent_runs row at the end of a run."""
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE agent_runs SET
+                    final_answer = ?,
+                    total_steps = ?,
+                    completed_normally = ?,
+                    finished_at = ?,
+                    final_messages_json = COALESCE(?, final_messages_json)
+                WHERE id = ?
+                """,
+                (
+                    final_answer,
+                    total_steps,
+                    1 if completed_normally else 0,
+                    now_iso(),
+                    final_messages_json,
+                    agent_run_id,
+                ),
+            )
+
+    def insert_tool_call(
+        self,
+        agent_run_id: int,
+        step_index: int,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        result: Mapping[str, object],
+        *,
+        ok: bool,
+        error: str | None,
+        duration_ms: int,
+    ) -> int:
+        """Insert one tool_calls row. Returns the new id."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO tool_calls (
+                    agent_run_id, step_index, tool_name,
+                    arguments_json, result_json,
+                    ok, error, duration_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_run_id,
+                    step_index,
+                    tool_name,
+                    json.dumps(dict(arguments), default=str),
+                    json.dumps(dict(result), default=str),
+                    1 if ok else 0,
+                    error,
+                    duration_ms,
+                ),
+            )
+            assert cur.lastrowid is not None
+            return int(cur.lastrowid)
+
+    def insert_judge_score(
+        self,
+        agent_run_id: int,
+        rubric: str,
+        judge_backend: str,
+        score: int,
+        *,
+        judge_model: str | None = None,
+        evidence: str | None = None,
+        raw_response: str | None = None,
+        latency_ms: int = 0,
+    ) -> int:
+        """Insert one judge_scores row. Returns the new id."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO judge_scores (
+                    agent_run_id, rubric, judge_backend, judge_model,
+                    score, evidence, raw_response, latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_run_id,
+                    rubric,
+                    judge_backend,
+                    judge_model,
+                    score,
+                    evidence,
+                    raw_response,
+                    latency_ms,
+                ),
+            )
+            assert cur.lastrowid is not None
+            return int(cur.lastrowid)
+
+    def get_agent_run(self, agent_run_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(  # type: ignore[no-any-return]
+                "SELECT * FROM agent_runs WHERE id = ?", (agent_run_id,)
+            ).fetchone()
+
+    def list_agent_runs_for_run(self, run_id: int) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+
+    def get_tool_calls_for_agent_run(self, agent_run_id: int) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM tool_calls WHERE agent_run_id = ? ORDER BY step_index, id",
+                (agent_run_id,),
+            ).fetchall()
+
+    def get_judge_scores_for_agent_run(self, agent_run_id: int) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM judge_scores WHERE agent_run_id = ? ORDER BY rubric, id",
+                (agent_run_id,),
+            ).fetchall()
+
+    def get_agent_run_for_result(self, result_id: int) -> sqlite3.Row | None:
+        """Find the agent_runs row whose prompt_id/backend matches this result."""
+        with self.connect() as conn:
+            r = conn.execute("SELECT * FROM results WHERE id = ?", (result_id,)).fetchone()
+            if r is None:
+                return None
+            row = conn.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ? AND prompt_id = ? AND backend_name = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (r["run_id"], r["prompt_id"], r["backend_name"]),
+            ).fetchone()
+            return row  # type: ignore[no-any-return]

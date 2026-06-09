@@ -17,6 +17,8 @@ from .compare import diff_outputs, side_by_side, summary_table
 from .config import BackendConfig, BackendSet, Prompt, PromptSet
 from .db import Database
 from .export import export_markdown
+from .graders import KNOWN_CHECKS
+from .graders import grade as grade_output
 from .runner import RunContext, run_matrix
 from .secrets import KeyResolver, build_resolver, parse_key_override
 
@@ -335,6 +337,45 @@ def export(
     final_out = Path(str(out).replace("{run_id}", str(run_id)))
     export_markdown(run_row, results, final_out)
     console.print(f"wrote {final_out}")
+
+
+@app.command()
+def grade(
+    run_id: int = typer.Argument(..., help="Run ID to (re-)grade."),
+    prompts_file: Path = typer.Option(..., "--prompts", "-p", help="YAML prompt set (source of validators)."),
+    db_path: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """(Re-)apply inline validators to every result in a run.
+
+    Useful when you add validators to prompts.yaml after a run already exists.
+    Skips results that have no matching prompt in the prompts file, and skips
+    results where the model errored.
+    """
+    db = _db(db_path)
+    if db.get_run(run_id) is None:
+        raise typer.BadParameter(f"no such run: {run_id}")
+    pset = PromptSet.from_yaml(prompts_file)
+    validators_by_id = {p.id: p.validators for p in pset.prompts if p.validators}
+
+    results = db.get_results(run_id)
+    graded = 0
+    skipped = 0
+    for r in results:
+        vals = validators_by_id.get(r["prompt_id"])
+        if not vals:
+            skipped += 1
+            continue
+        if r["error"]:
+            skipped += 1
+            continue
+        report = grade_output(r["output"] or "", vals)
+        db.set_validation(r["id"], json.dumps(report))
+        graded += 1
+
+    console.print(
+        f"[green]graded[/green] {graded} result(s), skipped {skipped} (no validators or errored)"
+    )
+    console.print(f"[dim]known checks: {', '.join(sorted(KNOWN_CHECKS))}[/dim]")
 
 
 @app.command()

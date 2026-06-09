@@ -81,6 +81,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Don't try to collect tests from fixture repos that happen to live under
+# tests/fixtures/. They look like test modules and break collection.
+norecursedirs = ["tests/fixtures", "tests/fixtures/*"]
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::starlette.exceptions.StarletteDeprecationWarning",

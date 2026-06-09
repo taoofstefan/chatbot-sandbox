@@ -1,0 +1,35 @@
+backends:
+  - name: nemotron-3-ultra
+    type: ollama
+    model: nemotron-3-ultra:cloud
+    base_url: http://127.0.0.1:11434
+    timeout: 300
+    notes: "NVIDIA Nemotron 3 Ultra, 550B (55B active), 256K-1M context, agent/coding focused"
+
+  - name: minimax-m3
+    type: ollama
+    model: minimax-m3:cloud
+    base_url: http://127.0.0.1:11434
+    timeout: 300
+    notes: "MiniMax M3, coding & agentic frontier, 1M context"
+
+  - name: gemma4-31b
+    type: ollama
+    model: gemma4:31b-cloud
+    base_url: http://127.0.0.1:11434
+    timeout: 300
+    notes: "Google Gemma 4 31B dense, 256K context, multimodal"
+
+  - name: qwen3.5-397b
+    type: ollama
+    model: qwen3.5:397b-cloud
+    base_url: http://127.0.0.1:11434
+    timeout: 300
+    notes: "Alibaba Qwen 3.5 397B-A17B MoE, 256K context"
+
+  - name: glm-5.1
+    type: ollama
+    model: glm-5.1:cloud
+    base_url: http://127.0.0.1:11434
+    timeout: 300
+    notes: "Z.AI GLM-5.1, 756B, 198K context, agentic engineering flagship"

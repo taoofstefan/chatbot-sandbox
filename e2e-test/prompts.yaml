@@ -1,0 +1,65 @@
+name: q3-2026-cloud-comparison
+description: 5-prompt benchmark for comparing 5 Ollama cloud models. Stress-tests instruction following, structured extraction, code, reasoning, and summarization+stance.
+prompts:
+  - id: letter-count-strawberry
+    text: 'How many times does the letter ''r'' appear in the word "strawberry"? Answer with just a number, nothing else.'
+    tags: [instruction-following, constraints, counting]
+    validators:
+      extract_int: 3
+      contains_all: ["3"]
+      equals: "3"
+
+  - id: json-extract-person
+    text: 'Extract the following information into a JSON object with exactly these three keys: name, age, city. Input: "Jane is 34, lives in Berlin." Output only the JSON, no other text.'
+    tags: [structured-extraction, json, schema]
+    validators:
+      json_match:
+        name: Jane
+        age: 34
+        city: Berlin
+      json_keys: [name, age, city]
+
+  - id: python-debounce-decorator
+    text: 'Write a Python decorator `@debounce(seconds)` that ensures the wrapped function is called at most once per N-second window. Include a brief docstring and handle the case where multiple calls arrive within the window. Keep it under 30 lines.'
+    tags: [code, python, idiomatic, edge-cases]
+    validators:
+      contains_def: debounce
+      python_compiles:
+      python_runs: |
+        import time
+        calls = []
+        @debounce(0.05)
+        def f(x):
+            calls.append((time.perf_counter(), x))
+            return x
+        for v in [1, 2, 3, 4]:
+            f(v)
+        time.sleep(0.1)
+        f(5)
+        assert len(calls) >= 1, "decorated function was never called"
+        assert calls[-1][1] == 5, f"final call should be f(5), got {calls[-1]}"
+
+  - id: logic-puzzle-boxes
+    text: 'I have 3 boxes labeled "apples", "oranges", and "mixed". I tell you that ALL labels are wrong. I reach into the box labeled "apples" and pull out an orange. Now I know exactly which box contains only oranges, which contains only apples, and which contains a mix. Explain your reasoning and state the contents of each box.'
+    tags: [reasoning, logic, multi-step]
+    validators:
+      contains_all:
+        - "apples"
+        - "oranges"
+        - "mixed"
+        - "wrong"
+        - "labeled"
+
+  - id: summarize-and-stance
+    text: |
+      Summarize the following article in 2-3 sentences, then give your opinion on whether the policy it describes is reasonable. Be willing to take a clear stance, not just "there are pros and cons."
+
+      Article: "The city of Brno announced this week that it will ban all personal vehicles from its historic center during weekend afternoons from May through September. Mayor Kovar cited noise complaints, air quality data showing particulate matter 2.5 levels regularly exceed EU limits on Saturdays, and a desire to make the center more pedestrian-friendly. Retailers in the center have pushed back, arguing the ban will drive customers to suburban malls and cost jobs. The city has pledged 2 million euros in compensation for affected businesses and says it will expand tram service to compensate. A pilot program last summer in just two districts saw a 40% drop in weekend traffic and a 15% increase in foot traffic for businesses in those zones."
+    tags: [summarization, opinion, stance]
+    validators:
+      contains_all:
+        - "Brno"
+        - "retailers"
+        - "pilot"
+        - "reasonable"
+        - "compensation"

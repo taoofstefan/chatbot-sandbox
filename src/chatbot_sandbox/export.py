@@ -2,8 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
+
+
+def _validation_md(row: sqlite3.Row) -> list[str]:
+    raw = row["validation_json"]
+    if not raw:
+        return []
+    try:
+        report = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not report:
+        return []
+    lines = ["", "**Validation:**"]
+    for name, info in report.items():
+        mark = "✅" if info.get("passed") else "❌"
+        lines.append(f"- {mark} `{name}` — {info.get('detail', '')}")
+    return lines
 
 
 def export_markdown(run: sqlite3.Row, results: list[sqlite3.Row], path: Path) -> None:
@@ -21,16 +39,25 @@ def export_markdown(run: sqlite3.Row, results: list[sqlite3.Row], path: Path) ->
 
     lines.append("## Summary")
     lines.append("")
-    lines.append("| Prompt | Backend | Status | Latency | In | Out | Cost |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("| Prompt | Backend | Status | Latency | In | Out | Cost | Val |")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for r in results:
         status = "ERR" if r["error"] else "OK"
         in_t = r["input_tokens"] if r["input_tokens"] is not None else "-"
         out_t = r["output_tokens"] if r["output_tokens"] is not None else "-"
         cost = f"${r['cost_usd']:.4f}" if r["cost_usd"] is not None else "-"
+        val = "-"
+        if r["validation_json"]:
+            try:
+                report = json.loads(r["validation_json"])
+                if report:
+                    passed = sum(1 for c in report.values() if c.get("passed"))
+                    val = f"{passed}/{len(report)}"
+            except (ValueError, TypeError):
+                pass
         lines.append(
             f"| {r['prompt_id']} | {r['backend_name']} | {status} | "
-            f"{r['latency_ms']}ms | {in_t} | {out_t} | {cost} |"
+            f"{r['latency_ms']}ms | {in_t} | {out_t} | {cost} | {val} |"
         )
     lines.append("")
 
@@ -59,6 +86,7 @@ def export_markdown(run: sqlite3.Row, results: list[sqlite3.Row], path: Path) ->
                 lines.append("```")
                 lines.append((r["output"] or "").rstrip())
                 lines.append("```")
+            lines.extend(_validation_md(r))
             if r["notes"]:
                 lines.append("")
                 lines.append(f"_Notes: {r['notes']}_")
