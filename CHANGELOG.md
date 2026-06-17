@@ -60,6 +60,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolution precedence is `--api-key` → `api_key_env` → literal `api_key`.
 - `cbs replay --backends` is now optional: it defaults to the run's stored
   backends snapshot and overrides it when given.
+- `e2e-test/report*.md` smoke-run exports are no longer tracked (untracked
+  via `git rm --cached`, kept on disk) and gitignored — they are regenerable
+  via `cbs export` and previously shipped real model outputs.
+
+### Removed
+- Unused `pytest-asyncio` dev dependency and the `asyncio_mode = "auto"`
+  pytest config: no async test functions exist, the plugin wasn't installed
+  in CI, and the option emitted an `Unknown config option` warning on every
+  run. `uv.lock` updated accordingly.
+
+### Fixed
+- CI was red on `main`: `uv sync --dev` doesn't install the dev tooling (it's
+  declared in `[project.optional-dependencies].dev`, but `--dev` targets
+  `[dependency-groups]`), so `uv run ruff` failed with "Failed to spawn: ruff".
+  Changed to `uv sync --extra dev` in CI, `AGENTS.md`, `README.md`, and
+  `HANDOVER.md`.
+- `[project.urls]` in `pyproject.toml` pointed at the placeholder
+  `github.com/example/chatbot-sandbox`; now the real
+  `github.com/taoofstefan/chatbot-sandbox`.
 
 ## [0.1.0] - initial release
 

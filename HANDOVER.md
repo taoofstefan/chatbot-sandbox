@@ -180,7 +180,7 @@ uv run mypy src
 
 ## When you sit down next
 
-1. `cd "C:\Users\stefa_y9d2lgt\OneDrive\Coding\Chatbot Sandbox"` and `uv sync --dev`
+1. `cd "C:\Users\stefa_y9d2lgt\OneDrive\Coding\Chatbot Sandbox"` and `uv sync --extra dev`
 2. Pull up https://ollama.com/search?c=cloud in a browser
 3. Pick 5 models following the mix in §1
 4. Replace `e2e-test/prompts.yaml` with the 5 prompts in §2

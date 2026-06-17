@@ -28,7 +28,7 @@ agent evals on top of the library API.
 ## Setup commands
 
 ```bash
-uv sync --dev                       # install deps (dev extras: ruff, mypy, pytest, respx)
+uv sync --extra dev                  # install deps (dev extra: ruff, mypy, pytest, respx)
 uv run cbs --help                   # CLI entry (== uv run python -m chatbot_sandbox)
 uv run cbs dashboard --port 8000    # dev server = the dashboard (FastAPI + HTMX)
 uv run pytest                       # tests
@@ -127,8 +127,7 @@ Important boundaries:
 - **Unit tests:** `tests/test_*.py` cover config, db, runner, graders,
   backends (HTTP mocked with `respx`), dashboard, cli, secrets, and the agent
   subsystem (`agent_sandbox`, `agent_tools`, `agent_sentinel`,
-  `agent_driver`, `agent_graders`, `agent_judges`). Run: `uv run pytest`
-  (`asyncio_mode = auto`).
+  `agent_driver`, `agent_graders`, `agent_judges`). Run: `uv run pytest`.
 - **Fixture repos:** `tests/fixtures/repo-bug-1/` is a real mini repo (its own
   `pyproject.toml` + `tests/`) copied into a sandbox for agent runs. It is
   excluded from pytest collection via `norecursedirs` — do not let it look like

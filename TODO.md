@@ -1,10 +1,12 @@
 # Chatbot Sandbox — TODO
 
 Handover document for the next session. The planned MVP, quality-of-life, and
-engineering-hygiene items (#1-#12) are all complete — see `CHANGELOG.md` and
-`git log` for the per-feature commits. The active backlog is the
-**Stretch / ideas** section below, plus the agentic-benchmark steps (7-10)
-tracked in `HANDOVER_AGENTIC.md`.
+engineering-hygiene items (#1-#12) are all complete, and a repo-hygiene pass
+(fixing red CI, packaging URLs, dropping a dead dev dep, untracking smoke
+exports) landed on `main` — see `CHANGELOG.md` and `git log`. The active
+backlog is now tracked as **GitHub issues**; the **Stretch / ideas** section
+below and the agentic-benchmark steps (7-10) in `HANDOVER_AGENTIC.md` are
+captured there. Start with issue #1 (the agent epic).
 
 Each completed item keeps a one-line status note for traceability.
 
@@ -106,11 +108,17 @@ Each completed item keeps a one-line status note for traceability.
 
 ## When you sit down tomorrow
 
-1. Run `uv sync` and `uv run pytest` to confirm the baseline still passes
-   (then `uv run ruff check . && uv run mypy src`).
-2. The MVP/QoL/hygiene TODO items (#1-#12) are all done — pick from the
-   **Stretch / ideas** section above, or continue the agentic benchmark via
-   `HANDOVER_AGENTIC.md` (steps 7-10).
+1. Run `uv sync --extra dev` (not `uv sync --dev` — the dev tooling is an
+   *extra*, not a dependency-group, so `--dev` installs nothing) and
+   `uv run pytest` to confirm the baseline still passes (then
+   `uv run ruff check . && uv run mypy src`). CI uses the same `--extra dev`
+   and should be green on `main` after the last push.
+2. The backlog lives in **GitHub issues** now. Start with **issue #1** (the
+   agent epic — `cbs run-agent` CLI + cross-model runner; see
+   `HANDOVER_AGENTIC.md` step 7). Work **one branch per issue**, agent-sized
+   (1-4 files, validatable with ruff/mypy/pytest). The **Stretch / ideas**
+   section below and `HANDOVER_AGENTIC.md` steps 7-10 are the source material
+   the issues were cut from.
 3. Schema evolves only through numbered migrations
    (`src/chatbot_sandbox/migrations/NNNN_*.sql`); never hand-edit the live
    schema or an existing migration.
@@ -119,3 +127,8 @@ Each completed item keeps a one-line status note for traceability.
 5. After each change, run `uv run ruff check . && uv run mypy src && uv run pytest`.
 6. Commit messages follow the existing pattern: imperative subject line, blank
    line, body that lists what + why with bullet points per file.
+
+> **Env note:** the `.venv` lives inside OneDrive, and `uv sync` can fail with
+> `Access is denied` when OneDrive locks `.venv/.../dist-info`. If a sync
+> fails that way, retry after the lock clears, or run with `UV_LINK_MODE=copy`
+> (or pause OneDrive sync / move `.venv` out of OneDrive).

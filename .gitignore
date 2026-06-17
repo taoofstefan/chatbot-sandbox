@@ -45,6 +45,9 @@ transcripts/
 logs/
 *.log
 
+# e2e-test smoke-run exports (regenerable via `cbs export`)
+e2e-test/report*.md
+
 # Editor
 .vscode/
 .idea/

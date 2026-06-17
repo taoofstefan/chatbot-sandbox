@@ -16,7 +16,7 @@ python -m chatbot_sandbox --help
 For local development:
 
 ```bash
-uv sync --dev
+uv sync --extra dev
 uv run cbs --help
 ```
 
@@ -198,7 +198,7 @@ cbs schema --out schemas.json
 ## Development
 
 ```bash
-uv sync --dev
+uv sync --extra dev
 uv run ruff check .
 uv run mypy src
 uv run pytest

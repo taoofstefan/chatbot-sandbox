@@ -40,10 +40,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/chatbot-sandbox"
-Repository = "https://github.com/example/chatbot-sandbox"
-Issues = "https://github.com/example/chatbot-sandbox/issues"
-Changelog = "https://github.com/example/chatbot-sandbox/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/taoofstefan/chatbot-sandbox"
+Repository = "https://github.com/taoofstefan/chatbot-sandbox"
+Issues = "https://github.com/taoofstefan/chatbot-sandbox/issues"
+Changelog = "https://github.com/taoofstefan/chatbot-sandbox/blob/main/CHANGELOG.md"
 
 [project.scripts]
 cbs = "chatbot_sandbox.cli:app"
@@ -53,7 +53,6 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pytest>=8.3",
-    "pytest-asyncio>=0.24",
     "respx>=0.21.1",
     "httpx>=0.28.1",
     "types-pyyaml>=6.0.12.20260518",
@@ -84,7 +83,6 @@ testpaths = ["tests"]
 # Don't try to collect tests from fixture repos that happen to live under
 # tests/fixtures/. They look like test modules and break collection.
 norecursedirs = ["tests/fixtures", "tests/fixtures/*"]
-asyncio_mode = "auto"
 filterwarnings = [
     "ignore::starlette.exceptions.StarletteDeprecationWarning",
     "ignore::DeprecationWarning:starlette.testclient",
