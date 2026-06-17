@@ -2,11 +2,13 @@
 
 Handover document for the next session. The planned MVP, quality-of-life, and
 engineering-hygiene items (#1-#12) are all complete, and a repo-hygiene pass
-(fixing red CI, packaging URLs, dropping a dead dev dep, untracking smoke
-exports) landed on `main` — see `CHANGELOG.md` and `git log`. The active
-backlog is now tracked as **GitHub issues**; the **Stretch / ideas** section
+(fixing the CI install step, packaging URLs, dropping a dead dev dep,
+untracking smoke exports) landed on `main` — see `CHANGELOG.md` and `git log`.
+CI still has a pytest tier red on Linux (now exposed because the install fix let
+Linux CI run pytest for the first time); tracked as **issue #9** — do it first.
+The active backlog is in **GitHub issues**; the **Stretch / ideas** section
 below and the agentic-benchmark steps (7-10) in `HANDOVER_AGENTIC.md` are
-captured there. Start with issue #1 (the agent epic).
+captured there. Start with issue #9, then issue #1 (the agent epic).
 
 Each completed item keeps a one-line status note for traceability.
 
@@ -110,12 +112,16 @@ Each completed item keeps a one-line status note for traceability.
 
 1. Run `uv sync --extra dev` (not `uv sync --dev` — the dev tooling is an
    *extra*, not a dependency-group, so `--dev` installs nothing) and
-   `uv run pytest` to confirm the baseline still passes (then
-   `uv run ruff check . && uv run mypy src`). CI uses the same `--extra dev`
-   and should be green on `main` after the last push.
-2. The backlog lives in **GitHub issues** now. Start with **issue #1** (the
-   agent epic — `cbs run-agent` CLI + cross-model runner; see
-   `HANDOVER_AGENTIC.md` step 7). Work **one branch per issue**, agent-sized
+   `uv run pytest` to confirm the baseline still passes locally (then
+   `uv run ruff check . && uv run mypy src`). **Caveat:** this is green on
+   Windows (282 pass), but **CI on `main` is currently RED** — the install
+   fix in `c4a913c` let Linux CI run pytest for the first time and exposed
+   Windows-only agent tests. Local-green ≠ CI-green here; see **issue #9**.
+2. Start with **issue #9** (make the 4 agent test fixtures cross-platform —
+   small: 2 test files, no `src/` changes) **before** #1; it's the CI-red
+   blocker on `main`. Then **issue #1** (the agent epic — `cbs run-agent`
+   CLI + cross-model runner; see `HANDOVER_AGENTIC.md` step 7). The backlog
+   lives in **GitHub issues** now; work **one branch per issue**, agent-sized
    (1-4 files, validatable with ruff/mypy/pytest). The **Stretch / ideas**
    section below and `HANDOVER_AGENTIC.md` steps 7-10 are the source material
    the issues were cut from.
