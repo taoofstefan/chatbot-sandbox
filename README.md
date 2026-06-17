@@ -119,30 +119,55 @@ All results land in a SQLite database (`results.db` by default). Schema is auto-
 
 ## API keys
 
-Multiple ways to provide a key per backend, in priority order:
+Keys are resolved per backend. Prefer the safer forms; the literal and CLI
+forms still work but leak more easily.
 
-1. **`--api-key backend=value`** on the CLI (repeatable, highest priority)
-2. **`api_key`** literal in the backend's YAML entry
-3. **`api_key_env`** env var name → looked up in the process env
-4. **`.env` file** loaded via `--env-file` (existing process env wins)
+- **Recommended — `api_key_env`**: name an environment variable in the
+  backend's YAML entry (`api_key_env: OPENAI_API_KEY`). The value lives in your
+  shell environment or a `.env` file, never in a tracked config.
+- **Acceptable (local-only) — `.env` file**: load `KEY=VALUE` pairs with
+  `--env-file .env`. Existing process env wins over the file.
+- **Discouraged — literal `api_key`**: a key written directly in the YAML. It
+  is convenient but ends up in your config file (and in git, if tracked). A run
+  prints a warning when a backend uses a literal `api_key`, and the value is
+  redacted before any snapshot is stored.
+- **Avoid — `--api-key backend=value`**: a one-off CLI override. It works, but
+  your shell history and process list can capture the value. Use it only for
+  throwaway local runs, never on a shared machine.
+
+Resolution precedence (highest first): `--api-key` override → `api_key_env`
+(including values loaded from `--env-file`) → literal `api_key`. All four
+paths remain supported; the guidance above is about which to reach for first.
 
 Ollama accepts the same key as a `Bearer` token when a remote Ollama is fronted
 by a reverse proxy that requires authentication.
 
 ```bash
-# CLI override (one-off)
-uv run cbs run -p p.yaml -b b.yaml \
-    --api-key openai-gpt4o=sk-... \
-    --api-key ollama-llama3=mytoken
+# Recommended: env var (set in your shell or a .env file)
+export OPENAI_API_KEY=sk-...
+uv run cbs run -p p.yaml -b b.yaml
 
-# .env file
+# Acceptable local-only: .env file
 cat > .env <<EOF
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 EOF
-
 uv run cbs run -p p.yaml -b b.yaml --env-file .env
+
+# Discouraged: literal in backends.yaml (triggers a warning; redacted if stored)
+#   - name: openai-gpt4o
+#     type: openai
+#     api_key: sk-...            # prefer api_key_env: OPENAI_API_KEY
+
+# Avoid: CLI override (may appear in shell history / process list)
+# uv run cbs run -p p.yaml -b b.yaml --api-key openai-gpt4o=sk-...
 ```
+
+Every run also stores a **redacted** snapshot of its backends config
+(`backends_json`) and run metadata (`meta_json`: cbs version, command,
+Python/platform) so a run can be replayed and audited without the original
+config files. No key is ever persisted; `cbs replay` resolves keys fresh from
+the environment at replay time.
 
 ## Dashboard
 

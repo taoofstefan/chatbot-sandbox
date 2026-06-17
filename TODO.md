@@ -1,124 +1,89 @@
 # Chatbot Sandbox — TODO
 
-Handover document for the next session. Ordered by priority. Each item lists
-goal, files involved, and a concrete acceptance test.
+Handover document for the next session. The planned MVP, quality-of-life, and
+engineering-hygiene items (#1-#12) are all complete — see `CHANGELOG.md` and
+`git log` for the per-feature commits. The active backlog is the
+**Stretch / ideas** section below, plus the agentic-benchmark steps (7-10)
+tracked in `HANDOVER_AGENTIC.md`.
+
+Each completed item keeps a one-line status note for traceability.
 
 ---
 
-## MVP gaps (do these first)
+## MVP gaps — done
 
-### 1. Live side-by-side comparison
-- **Goal**: A dedicated "compare" view that picks a run + a prompt and shows every
-  backend's output stacked, with token/latency headers and a one-click diff link.
-- **Files**: `src/chatbot_sandbox/dashboard.py`, new template
-  `src/chatbot_sandbox/dashboard/templates/compare.html`.
-- **Acceptance**: `GET /runs/{id}/compare?prompt={pid}` returns a 200 with one
-  block per backend. Each block has the backend name, model, latency, output,
-  and a link to `/diff?a={id}&b={id}` pre-filled with itself + the first sibling.
+### 1. Live side-by-side comparison — done
+- **Status**: `/runs/{id}/compare?prompt={pid}` route + `compare.html`
+  (commit `fae789e`); stacks one block per backend with model/latency headers
+  and a diff link.
 
-### 2. Token & cost aggregation per (prompt, tag)
-- **Goal**: A small "scorecard" page: per prompt, show best/worst latency, total
-  cost, tag counts. Helpful for the "best cheap model for this task" idea.
-- **Files**: `src/chatbot_sandbox/dashboard.py` (new `scorecard` route), new
-  template `scorecard.html`. Optional: new SQL view in `db.py`.
-- **Acceptance**: `GET /scorecard` renders a table with one row per prompt
-  and columns: backends_tested, ok_count, total_latency_ms, total_cost, top_tag.
+### 2. Token & cost aggregation per (prompt, tag) — done
+- **Status**: `/scorecard` route + `scorecard.html` (commit `c01339a`); one row
+  per prompt with backends_tested, ok_count, total_latency_ms, total_cost,
+  top_tag.
 
-### 3. Replay via stored prompt text
-- **Goal**: `cbs replay <run_id>` currently warns that prompt text is lost. Store
-  the original prompt text on the run row at creation time so replay can re-run
-  exactly.
-- **Files**: `src/chatbot_sandbox/db.py` (schema migration: add
-  `prompts_json` column to `runs`), `src/chatbot_sandbox/runner.py` (capture
-  prompt text on `create_run`), `src/chatbot_sandbox/cli.py` (replay reads from
-  `prompts_json` first, falls back to `--prompts`).
-- **Acceptance**: Run a set, edit `prompts.yaml`, replay the old run; the new
-  run uses the *original* text, not the edited one. Test asserts equality of
-  text via `db.get_run(run_id)['prompts_json']`.
+### 3. Replay via stored prompt text — done
+- **Status**: `runs.prompts_json` (migration `0002`) stores full prompt text at
+  run creation; `cbs replay` reads it first and only falls back to `--prompts`.
+  Editing `prompts.yaml` no longer changes a replay of an old run.
+- **Extended in `0005`**: `runs.backends_json` stores a *redacted* backends
+  config snapshot and `runs.meta_json` stores cbs version + command + platform,
+  so `cbs replay` now reproduces a run without the original config files
+  (`--backends` is optional and overrides the stored snapshot). Secrets are
+  never stored; keys resolve fresh from the environment at replay time.
 
-### 4. Web dashboard run trigger
-- **Goal**: Run new benchmarks from the dashboard. Form: upload prompts.yaml
-  + backends.yaml (or pick from disk), choose backends/prompts, click Run.
-- **Files**: `src/chatbot_sandbox/dashboard.py` (new `POST /runs` route), new
-  template `run_new.html`. Use FastAPI's `UploadFile` for file inputs.
-- **Acceptance**: Submitting the form creates a new run and redirects to
-  `/runs/{new_id}`. Long runs should be backgrounded (FastAPI `BackgroundTasks`).
+### 4. Web dashboard run trigger — done
+- **Status**: `GET /runs/new` (form) + `POST /runs` + `run_new.html` create a
+  run from uploaded/selected prompts + backends and redirect to `/runs/{id}`.
 
 ---
 
-## Quality of life
+## Quality of life — done
 
-### 5. `cbs diff` subcommand
-- **Goal**: `cbs diff <result_a> <result_b>` prints a unified diff in the
-  terminal, mirroring `/diff` in the dashboard.
-- **Files**: `src/chatbot_sandbox/cli.py` (new `@app.command() diff`).
-- **Acceptance**: With two stored results, `cbs diff 1 2` prints a colored diff
-  and exits 0.
+### 5. `cbs diff` subcommand — done
+- **Status**: `cbs diff <result_a> <result_b>` prints a unified diff
+  (`cli.py:442`), mirroring the dashboard `/diff`.
 
-### 6. Search across runs
-- **Goal**: A simple `WHERE output LIKE ?` search box in the dashboard, results
-  link back to the run. Optional: full-text via SQLite FTS5.
-- **Files**: `src/chatbot_sandbox/dashboard.py` (new `GET /search`).
-- **Acceptance**: Searching for a unique word in one output returns exactly
-  that result.
+### 6. Search across runs — done
+- **Status**: `/search` route + `search.html`; `WHERE output LIKE ?`, results
+  link back to the run. Full-text via SQLite FTS5 deferred (not needed yet).
 
-### 7. Per-run notes roundtrip
-- **Goal**: Surface the `runs.notes` field in the dashboard as an editable
-  textarea; currently only `results.notes` are editable.
-- **Files**: `src/chatbot_sandbox/db.py` (add `set_run_notes`), dashboard route
-  + template.
-- **Acceptance**: Editing a run note and reloading the page persists the value.
+### 7. Per-run notes roundtrip — done
+- **Status**: `set_run_notes` in `db.py` + `POST /runs/{id}/notes` +
+  `_run_note.html`; run notes are editable in the dashboard.
 
-### 8. Config validation hardening
-- **Goal**: When `validate` is run without env vars set, fail with a clear
-  message naming which backend needs which env var. Currently it just prints
-  "missing" in green.
-- **Files**: `src/chatbot_sandbox/cli.py` (`validate` function), maybe a new
-  `requirements` field per backend in `config.py`.
-- **Acceptance**: `cbs validate -b backends.yaml` with no env vars prints
-  `warn` lines (not `ok`) for backends whose key is unresolved and type
-  requires auth.
+### 8. Config validation hardening — done
+- **Status**: `cbs validate` prints `warn` lines for backends that embed a
+  literal `api_key` and for auth-requiring backends whose key is unresolved
+  (naming the env var); covered by `test_validate_warns_on_literal_api_key`.
 
 ---
 
-## Engineering hygiene
+## Engineering hygiene — done
 
-### 9. CI workflow
-- **Goal**: GitHub Actions (or local pre-commit) running `ruff`, `mypy`,
-  `pytest` on every push.
-- **Files**: `.github/workflows/ci.yml`.
-- **Acceptance**: Push a branch with a deliberate mypy error → CI fails with
-  the expected line number.
+### 9. CI workflow — done
+- **Status**: `.github/workflows/ci.yml` (commit `7b14225`) runs ruff + mypy +
+  pytest on push/PR to `main`.
 
-### 10. Test coverage for the runner
-- **Goal**: Cover the parallel branch in `runner.run_matrix` with a fake
-  backend that sleeps; ensure `-j 4` actually parallelizes and the
-  `on_progress` callback fires N times.
-- **Files**: `tests/test_runner.py` (new).
-- **Acceptance**: Test asserts wall-clock time for 4×1s tasks with `-j 4` is
-  under 2s, and that the progress callback was called 4 times.
+### 10. Test coverage for the runner — done
+- **Status**: `tests/test_runner.py` covers `run_matrix` parallelism
+  (`test_run_matrix_parallel_faster_than_serial`) and the per-task progress
+  callback (`test_run_matrix_progress_callback_fires_per_task`).
 
-### 11. Test coverage for backends with a fake HTTP server
-- **Goal**: Spin up a `pytest-httpserver` (or `respx`) mock for Ollama,
-  OpenAI, Anthropic; assert that backends parse responses correctly and
-  surface errors as `RunResult.error`.
-- **Files**: `tests/test_backends_*.py` (new). Add `respx` or
-  `pytest-httpserver` to dev deps.
-- **Acceptance**: Each backend has a happy-path test and a 401/500 error test.
+### 11. Test coverage for backends — done
+- **Status**: `tests/test_backends_http.py` (respx) covers happy-path +
+  401/500/unauthorized for Ollama, OpenAI, and Anthropic.
 
-### 12. Schema migrations
-- **Goal**: Currently `CREATE TABLE IF NOT EXISTS` won't add new columns. Move
-  to a tiny migration system (e.g. `PRAGMA user_version` + ordered SQL files
-  in `migrations/`).
-- **Files**: `src/chatbot_sandbox/db.py` (new `migrate()` method),
-  `src/chatbot_sandbox/migrations/0001_init.sql`, etc.
-- **Acceptance**: After deleting and recreating the DB, the schema includes
-  all columns from all migrations, and `PRAGMA user_version` matches the
-  latest applied.
+### 12. Schema migrations — done
+- **Status**: Migrations live in `src/chatbot_sandbox/migrations/NNNN_*.sql`
+  and are applied via `PRAGMA user_version` in `db._bootstrap_and_migrate`,
+  with per-version guards in `_apply_migration` for legacy DBs. Current head
+  is `0005_reproducibility.sql`. Add new columns/files here; never hand-edit an
+  existing migration or the live schema.
 
 ---
 
-## Stretch / ideas (lower priority)
+## Stretch / ideas (the remaining backlog)
 
 - **Streaming tokens live to the dashboard** during `cbs run` via SSE. Useful
   for long prompts; can be skipped until needed.
@@ -133,17 +98,24 @@ goal, files involved, and a concrete acceptance test.
 - **JSON Schema export of configs**: helps editor autocompletion. Use
   `pydantic.json_schema()`.
 - **Packaging**: publish to PyPI as `chatbot-sandbox` so others can
-  `pip install chatbot-sandbox` and `cbs --help` works. Add a `[project.urls]`
-  block and a `__main__.py`.
+  `pip install chatbot-sandbox` and `cbs --help` works. Prep is done
+  (`__main__.py`, `[project.urls]`, changelog — commit `44f8f1e`); the actual
+  release upload is the remaining step.
 
 ---
 
 ## When you sit down tomorrow
 
-1. Run `uv sync` and `uv run pytest` to confirm the baseline still passes.
-2. Pick **#1** (live side-by-side) if you want immediate dashboard value.
-3. Pick **#3** (replay via stored text) if you care about reproducibility.
-4. Pick **#9** (CI) if you want to start hosting this anywhere public.
+1. Run `uv sync` and `uv run pytest` to confirm the baseline still passes
+   (then `uv run ruff check . && uv run mypy src`).
+2. The MVP/QoL/hygiene TODO items (#1-#12) are all done — pick from the
+   **Stretch / ideas** section above, or continue the agentic benchmark via
+   `HANDOVER_AGENTIC.md` (steps 7-10).
+3. Schema evolves only through numbered migrations
+   (`src/chatbot_sandbox/migrations/NNNN_*.sql`); never hand-edit the live
+   schema or an existing migration.
+4. Public examples stay synthetic (see `PRIVACY.md`); never commit real
+   prompts, outputs, keys, or run data.
 5. After each change, run `uv run ruff check . && uv run mypy src && uv run pytest`.
 6. Commit messages follow the existing pattern: imperative subject line, blank
    line, body that lists what + why with bullet points per file.

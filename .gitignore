@@ -19,16 +19,31 @@ dist/
 *.egg-info/
 *.egg
 
-# Project
-results.db
+# Local benchmark data
+.cbs/
+runs/
+results*.db
 agent-results.db
-results.db-journal
+results*.sqlite
+*.db-journal
 *.db-wal
 *.db-shm
-*.log
+
+# Local/private configs
 .env
-.env.local
+.env.*
+!.env.example
 *.local
+*.local.yaml
+backends.local.yaml
+prompts.local.yaml
+
+# Generated exports / reports (regenerable)
+exports/
+reports/
+transcripts/
+logs/
+*.log
 
 # Editor
 .vscode/
@@ -36,6 +51,3 @@ results.db-journal
 *.swp
 *.swo
 .DS_Store
-
-# Exported reports (regenerable)
-exports/
