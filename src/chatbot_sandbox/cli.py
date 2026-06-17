@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import typer
 import yaml
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
@@ -15,12 +17,18 @@ from .backends import build_backend, known_types
 from .backends.base import Backend, BackendError
 from .compare import diff_outputs, side_by_side, summary_table
 from .config import BackendConfig, BackendSet, Prompt, PromptSet
-from .db import Database
+from .db import Database, build_run_meta
 from .export import export_markdown
 from .graders import KNOWN_CHECKS
 from .graders import grade as grade_output
 from .runner import RunContext, run_matrix
-from .secrets import KeyResolver, build_resolver, parse_key_override
+from .secrets import (
+    KeyResolver,
+    build_resolver,
+    literal_key_warning,
+    parse_key_override,
+    redact_backend_config,
+)
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -57,6 +65,25 @@ def _key_source(cfg: BackendConfig, resolver: KeyResolver) -> str:
     if cfg.api_key_env:
         return f"env:{cfg.api_key_env} (unset)"
     return ""
+
+
+def _warn_literal_keys(cfgs: list[BackendConfig]) -> None:
+    """Warn once per backend that carries a literal api_key in its config."""
+    for cfg in cfgs:
+        msg = literal_key_warning(cfg)
+        if msg:
+            console.print(f"[yellow]warn[/yellow] {msg}")
+
+
+def _backend_config_from_snapshot(snapshot: dict[str, Any]) -> BackendConfig:
+    """Reconstruct a BackendConfig from a stored (redacted) snapshot.
+
+    The stored ``api_key`` is either None or "[redacted]", so it is dropped and
+    keys resolve fresh from the environment / overrides at replay time.
+    """
+    data = dict(snapshot)
+    data.pop("api_key", None)
+    return BackendConfig.model_validate(data)
 
 
 @app.command()
@@ -221,6 +248,8 @@ def run(
         table.add_row(str(i), pid, bname, key_status)
     console.print(table)
 
+    _warn_literal_keys(backends_cfg)
+
     if dry_run:
         console.print("[yellow]dry-run: not executing[/yellow]")
         return
@@ -231,6 +260,8 @@ def run(
         [b.name for b in backends_cfg],
         notes=notes,
         prompts=[{"id": p.id, "text": p.text} for p in prompts],
+        backends=[redact_backend_config(b) for b in backends_cfg],
+        meta=build_run_meta("run"),
     )
     console.print(f"[dim]run_id={run_id} db={db.path}[/dim]")
 
@@ -428,7 +459,12 @@ def diff(
 @app.command()
 def replay(
     run_id: int = typer.Argument(..., help="Original run id to replay."),
-    backends_file: Path = typer.Option(..., "--backends", "-b"),
+    backends_file: Path | None = typer.Option(
+        None,
+        "--backends",
+        "-b",
+        help="Override the backends used; by default the run's stored (redacted) snapshot is replayed.",
+    ),
     prompts_file: Path | None = typer.Option(
         None, "--prompts", "-p", help="Original prompts file (replay will use real text)."
     ),
@@ -438,11 +474,13 @@ def replay(
     api_key: list[str] | None = typer.Option(None, "--api-key"),
     env_file: Path | None = typer.Option(None, "--env-file"),
 ) -> None:
-    """Replay the prompts of an old run against (possibly new) backends.
+    """Replay the prompts of an old run against the same (or new) backends.
 
-    Prompt text is read from the original run's stored `prompts_json` first,
-    so a run can be replayed exactly even if the original prompts file has
-    since been edited. Pass --prompts to override (matched by id).
+    Prompt text is read from the original run's stored `prompts_json` first, so
+    a run can be replayed exactly even if the original prompts file has since
+    been edited (pass --prompts to override, matched by id). Backends default to
+    the run's stored `backends_json` snapshot (secrets redacted; keys resolve
+    fresh from the environment); pass --backends to override.
     """
     try:
         overrides = parse_key_override(api_key)
@@ -474,6 +512,19 @@ def replay(
 
     stored_by_id = {p.id: p for p in stored_prompts}
 
+    stored_backends_json = original["backends_json"]
+    if stored_backends_json is None:
+        stored_backends_json = ""
+    stored_backends: list[BackendConfig] = []
+    if stored_backends_json:
+        try:
+            raw = json.loads(stored_backends_json)
+            stored_backends = [_backend_config_from_snapshot(d) for d in raw]
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, ValidationError) as e:
+            raise typer.BadParameter(
+                f"run {run_id} has malformed backends_json: {e}"
+            ) from None
+
     if prompts_file is not None:
         pset = PromptSet.from_yaml(prompts_file)
         by_id = {p.id: p for p in pset.prompts}
@@ -495,14 +546,26 @@ def replay(
             f"run {run_id} predates prompt-text storage; pass --prompts with the original file"
         )
     pset = PromptSet(name=f"replay-of-{run_id}", prompts=replay_prompts)
-    bset = BackendSet.from_yaml(backends_file)
-    cfgs = bset.find(None)
+
+    if backends_file is not None:
+        bset = BackendSet.from_yaml(backends_file)
+        cfgs = bset.find(None)
+    elif stored_backends:
+        cfgs = stored_backends
+    else:
+        raise typer.BadParameter(
+            f"run {run_id} predates backends-config storage; "
+            "pass --backends with the original file"
+        )
+    _warn_literal_keys(cfgs)
 
     new_run_id = db.create_run(
         f"replay-of-{run_id}",
         [c.name for c in cfgs],
         notes=notes or f"replay of run {run_id}",
         prompts=[{"id": p.id, "text": p.text} for p in replay_prompts],
+        backends=[redact_backend_config(c) for c in cfgs],
+        meta=build_run_meta("replay"),
     )
     backends = [build_backend(c, key_resolver=resolver) for c in cfgs]
     ctx = RunContext(run_id=new_run_id, db=db, parallel=parallel)
@@ -550,6 +613,9 @@ def validate(
                 continue
             key = resolver.resolve(b)
             source = _key_source(b, resolver)
+            literal_warn = literal_key_warning(b)
+            if literal_warn:
+                console.print(f"[yellow]warn[/yellow] {literal_warn}")
             if key is None and b.type not in ("ollama", "command", "claude_cli", "codex_cli"):
                 hint = _missing_key_hint(b)
                 msg = f"backend: {b.name} ({b.type}) — no key resolved; {hint}"

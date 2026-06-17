@@ -27,9 +27,9 @@ from fastapi.templating import Jinja2Templates
 
 from .backends import build_backend
 from .config import BackendSet, PromptSet
-from .db import Database
+from .db import Database, build_run_meta
 from .runner import RunContext, run_matrix
-from .secrets import build_resolver
+from .secrets import build_resolver, redact_backend_config
 
 _TEMPLATES_DIR = Path(__file__).parent / "dashboard" / "templates"
 _STATIC_DIR = Path(__file__).parent / "dashboard" / "static"
@@ -106,6 +106,8 @@ def create_app(db_path: Path) -> FastAPI:
             [c.name for c in cfgs],
             notes=notes,
             prompts=[{"id": p.id, "text": p.text} for p in pset.prompts],
+            backends=[redact_backend_config(c) for c in cfgs],
+            meta=build_run_meta("dashboard"),
         )
 
         def _execute() -> None:

@@ -16,6 +16,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .config import BackendConfig
 
@@ -121,3 +122,47 @@ def build_resolver(
         overrides=dict(overrides or {}),
         extra_env=extra,
     )
+
+
+# Option keys (case-insensitive) treated as secrets when redacting a backend
+# config snapshot. The dedicated `api_key` field is always redacted; this covers
+# the case where a key is passed through the free-form `options` dict instead.
+_SECRET_OPTION_KEYS = frozenset(
+    {"api_key", "apikey", "api_token", "secret", "token", "password"}
+)
+
+
+def literal_key_warning(cfg: BackendConfig) -> str | None:
+    """Return a warning message if ``cfg`` embeds a literal api_key, else None.
+
+    A literal key in a config file is a secret at rest and ends up in git if
+    the file is tracked; prefer ``api_key_env`` and load the value from the
+    environment or a ``.env`` file.
+    """
+    if cfg.api_key:
+        return (
+            f"backend {cfg.name!r} embeds a literal api_key in config; prefer "
+            "api_key_env and load the value from the environment or a .env file"
+        )
+    return None
+
+
+def redact_backend_config(cfg: BackendConfig) -> dict[str, Any]:
+    """Return a JSON-serializable snapshot of ``cfg`` with secrets removed.
+
+    The full config (type, model, base_url, options, costs, timeout, and the
+    ``api_key_env`` *name*) is kept so a run can be reproduced; the literal
+    ``api_key`` value and any secret-named keys in ``options`` are replaced with
+    "[redacted]". Replay reconstructs the backend from this snapshot and
+    resolves keys fresh from the environment, so no secret is ever stored.
+    """
+    data: dict[str, Any] = cfg.model_dump(mode="json")
+    if data.get("api_key"):
+        data["api_key"] = "[redacted]"
+    options = data.get("options")
+    if isinstance(options, dict):
+        data["options"] = {
+            key: ("[redacted]" if key.lower() in _SECRET_OPTION_KEYS else value)
+            for key, value in options.items()
+        }
+    return data

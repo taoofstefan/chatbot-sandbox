@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 import sqlite3
 from collections.abc import Iterator, Mapping
@@ -11,12 +12,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _MIGRATION_RE = re.compile(r"^(\d{4})_(.+)\.sql$")
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def build_run_meta(command: str) -> dict[str, str]:
+    """Build the run-metadata snapshot stored in ``runs.meta_json``.
+
+    Captures the tool version, the invoking command, and the Python/platform
+    that produced the run — enough to audit *how* a run was made without
+    storing anything secret. The full argv is intentionally excluded so a key
+    passed via ``--api-key backend=value`` can never leak into the database.
+    """
+    return {
+        "cbs_version": __version__,
+        "command": command,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+    }
 
 
 def _load_migrations() -> list[tuple[int, str, Path]]:
@@ -119,13 +138,26 @@ class Database:
         backend_names: list[str],
         notes: str = "",
         prompts: list[dict[str, str]] | None = None,
+        backends: list[dict[str, Any]] | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> int:
         prompts_json = json.dumps(prompts) if prompts is not None else None
+        backends_json = json.dumps(backends) if backends is not None else None
+        meta_json = json.dumps(meta) if meta is not None else None
         with self.connect() as conn:
             cur = conn.execute(
-                "INSERT INTO runs (started_at, prompt_set_name, backend_names, notes, prompts_json) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (now_iso(), prompt_set_name, ",".join(backend_names), notes, prompts_json),
+                "INSERT INTO runs (started_at, prompt_set_name, backend_names, notes, "
+                "prompts_json, backends_json, meta_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    now_iso(),
+                    prompt_set_name,
+                    ",".join(backend_names),
+                    notes,
+                    prompts_json,
+                    backends_json,
+                    meta_json,
+                ),
             )
             assert cur.lastrowid is not None
             return int(cur.lastrowid)

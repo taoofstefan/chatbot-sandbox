@@ -331,3 +331,140 @@ def test_replay_without_stored_prompts_needs_prompts_arg(tmp_path: Path) -> None
     )
     assert result.exit_code != 0
     assert "predates prompt-text storage" in result.output
+
+
+def _write_command_backends(path: Path, *, api_key: str | None = None) -> None:
+    entry = (
+        "backends:\n"
+        "  - name: echo\n"
+        "    type: command\n"
+        f"    command: ['{sys.executable}', '-c', 'import sys; print(sys.stdin.read().strip())']\n"
+        "    model: echo-v1\n"
+    )
+    if api_key is not None:
+        entry += f"    api_key: {api_key}\n"
+    path.write_text(entry, encoding="utf-8")
+
+
+def test_run_stores_backends_snapshot_and_meta(tmp_path: Path) -> None:
+    prompts = tmp_path / "prompts.yaml"
+    backends = tmp_path / "backends.yaml"
+    db_path = tmp_path / "r.db"
+
+    prompts.write_text("name: t\nprompts:\n  - id: a\n    text: hi\n", encoding="utf-8")
+    _write_command_backends(backends)
+
+    result = runner.invoke(
+        app,
+        ["run", "--prompts", str(prompts), "--backends", str(backends), "--db", str(db_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    db = Database(db_path)
+    row = db.get_run(1)
+    assert row is not None
+    assert row["backends_json"] is not None
+    snap = json.loads(row["backends_json"])
+    assert snap[0]["name"] == "echo"
+    assert snap[0]["type"] == "command"
+    # Command backends carry no key: api_key is None (not a literal, not redacted).
+    assert snap[0]["api_key"] is None
+    assert row["meta_json"] is not None
+    meta = json.loads(row["meta_json"])
+    assert meta["command"] == "run"
+    assert meta["cbs_version"]
+
+
+def test_replay_uses_stored_backends_when_omitted(tmp_path: Path) -> None:
+    prompts = tmp_path / "prompts.yaml"
+    backends = tmp_path / "backends.yaml"
+    db_path = tmp_path / "r.db"
+
+    prompts.write_text("name: t\nprompts:\n  - id: a\n    text: hi\n", encoding="utf-8")
+    _write_command_backends(backends)
+
+    run_result = runner.invoke(
+        app,
+        ["run", "--prompts", str(prompts), "--backends", str(backends), "--db", str(db_path)],
+    )
+    assert run_result.exit_code == 0, run_result.output
+
+    # Replay WITHOUT --backends: must use the stored snapshot and succeed.
+    replay = runner.invoke(app, ["replay", "1", "--db", str(db_path)])
+    assert replay.exit_code == 0, replay.output
+
+    db = Database(db_path)
+    new_run = db.get_run(2)
+    assert new_run is not None
+    assert new_run["prompts_json"] is not None
+    # The replay run also stores its own (redacted) backends snapshot + meta.
+    assert new_run["backends_json"] is not None
+    assert json.loads(new_run["backends_json"])[0]["name"] == "echo"
+    assert json.loads(new_run["meta_json"])["command"] == "replay"
+
+
+def test_replay_without_stored_backends_needs_backends_arg(tmp_path: Path) -> None:
+    db_path = tmp_path / "r.db"
+    db = Database(db_path)
+    # Run has stored prompt text but predates backends-config storage.
+    run_id = db.create_run(
+        "old",
+        ["echo"],
+        notes="predates backends storage",
+        prompts=[{"id": "a", "text": "hi"}],
+    )
+    db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "a",
+            "backend_name": "echo",
+            "model": "echo-v1",
+            "output": "x",
+            "error": None,
+            "latency_ms": 1,
+        }
+    )
+    db.finish_run(run_id)
+
+    result = runner.invoke(app, ["replay", str(run_id), "--db", str(db_path)])
+    assert result.exit_code != 0
+    assert "predates backends-config storage" in result.output
+
+
+def test_run_warns_on_literal_api_key_and_redacts_it(tmp_path: Path) -> None:
+    prompts = tmp_path / "prompts.yaml"
+    backends = tmp_path / "backends.yaml"
+    db_path = tmp_path / "r.db"
+
+    prompts.write_text("name: t\nprompts:\n  - id: a\n    text: hi\n", encoding="utf-8")
+    _write_command_backends(backends, api_key="sk-literal-do-not-use")
+
+    result = runner.invoke(
+        app,
+        ["run", "--prompts", str(prompts), "--backends", str(backends), "--db", str(db_path)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "literal api_key" in result.output
+
+    # The literal key must never be stored verbatim in the snapshot.
+    db = Database(db_path)
+    row = db.get_run(1)
+    assert row is not None
+    assert row["backends_json"] is not None
+    assert "sk-literal-do-not-use" not in row["backends_json"]
+    assert "[redacted]" in row["backends_json"]
+
+
+def test_validate_warns_on_literal_api_key(tmp_path: Path) -> None:
+    f = tmp_path / "backends.yaml"
+    f.write_text(
+        "backends:\n"
+        "  - name: local\n"
+        "    type: ollama\n"
+        "    model: llama3.1:8b\n"
+        "    api_key: sk-literal\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["validate", "--backends", str(f)])
+    assert result.exit_code == 0, result.output
+    assert "literal api_key" in result.output

@@ -7,8 +7,10 @@ import pytest
 from chatbot_sandbox.config import BackendConfig
 from chatbot_sandbox.secrets import (
     build_resolver,
+    literal_key_warning,
     load_env_file,
     parse_key_override,
+    redact_backend_config,
 )
 
 
@@ -99,3 +101,54 @@ def test_resolver_env_file_does_not_override_process_env(
 def test_resolver_missing_returns_none() -> None:
     cfg = BackendConfig(name="oai", type="openai", model="gpt-4o-mini")
     assert build_resolver().resolve(cfg) is None
+
+
+def test_literal_key_warning_when_present() -> None:
+    cfg = BackendConfig(name="oai", type="openai", model="m", api_key="sk-secret")
+    msg = literal_key_warning(cfg)
+    assert msg is not None
+    assert "oai" in msg
+    assert "literal api_key" in msg
+
+
+def test_literal_key_warning_when_absent() -> None:
+    cfg = BackendConfig(name="oai", type="openai", model="m", api_key_env="OPENAI_API_KEY")
+    assert literal_key_warning(cfg) is None
+
+
+def test_redact_backend_config_redacts_literal_api_key() -> None:
+    cfg = BackendConfig(name="oai", type="openai", model="m", api_key="sk-secret")
+    snap = redact_backend_config(cfg)
+    assert snap["api_key"] == "[redacted]"
+    assert snap["api_key_env"] is None
+    assert snap["name"] == "oai"
+    assert snap["model"] == "m"
+
+
+def test_redact_backend_config_keeps_api_key_env_name() -> None:
+    cfg = BackendConfig(
+        name="oai", type="openai", model="m", api_key="sk-secret", api_key_env="OPENAI_API_KEY"
+    )
+    snap = redact_backend_config(cfg)
+    assert snap["api_key"] == "[redacted]"
+    assert snap["api_key_env"] == "OPENAI_API_KEY"
+
+
+def test_redact_backend_config_redacts_secret_option_keys() -> None:
+    cfg = BackendConfig(
+        name="oai",
+        type="openai",
+        model="m",
+        options={"temperature": 0.7, "api_key": "opt-secret", "token": "t"},
+    )
+    snap = redact_backend_config(cfg)
+    assert snap["options"]["temperature"] == 0.7
+    assert snap["options"]["api_key"] == "[redacted]"
+    assert snap["options"]["token"] == "[redacted]"
+
+
+def test_redact_backend_config_without_api_key() -> None:
+    cfg = BackendConfig(name="ollama", type="ollama", model="llama3")
+    snap = redact_backend_config(cfg)
+    assert snap["api_key"] is None
+    assert snap["name"] == "ollama"

@@ -178,3 +178,66 @@ def test_legacy_db_with_prompts_json_stamps_to_v2(tmp_path: Path) -> None:
     assert row is not None
     assert row["prompts_json"] == "[]"
 
+
+def test_create_run_stores_backends_json_and_meta(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    backends = [{"name": "b1", "type": "ollama", "model": "llama3"}]
+    meta = {"cbs_version": "0.2.0", "command": "run"}
+    run_id = db.create_run("set", ["b1"], backends=backends, meta=meta)
+    row = db.get_run(run_id)
+    assert row is not None
+    assert row["backends_json"] is not None
+    assert json.loads(row["backends_json"]) == backends
+    assert row["meta_json"] is not None
+    assert json.loads(row["meta_json"]) == meta
+
+
+def test_create_run_without_backends_meta_has_null(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id = db.create_run("set", ["b1"])
+    row = db.get_run(run_id)
+    assert row is not None
+    assert row["backends_json"] is None
+    assert row["meta_json"] is None
+
+
+def test_migration_0005_adds_columns_to_legacy_db(tmp_path: Path) -> None:
+    """A DB stamped at v4 (no backends_json/meta_json) gets the 0005 columns
+    added on open, and existing rows keep NULL."""
+    import sqlite3
+
+    db_path = tmp_path / "legacy_v4.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            prompt_set_name TEXT,
+            backend_names TEXT NOT NULL,
+            notes TEXT DEFAULT '',
+            prompts_json TEXT
+        );
+        PRAGMA user_version = 4;
+        """
+    )
+    conn.execute(
+        "INSERT INTO runs (started_at, backend_names, prompts_json) VALUES (?, ?, ?)",
+        ("2025-01-01T00:00:00Z", "b1", "[]"),
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(db_path)
+    assert db.user_version() >= 5
+    with db.connect() as c:
+        cols = {row["name"] for row in c.execute("PRAGMA table_info(runs)").fetchall()}
+    assert "backends_json" in cols
+    assert "meta_json" in cols
+    legacy_run = db.get_run(1)
+    assert legacy_run is not None
+    assert legacy_run["backends_json"] is None
+    assert legacy_run["meta_json"] is None
+
