@@ -240,6 +240,112 @@ CASES: dict[str, CaseSpec] = {
         },
         notes="agentic case 8: regression guard",
     ),
+    "repo-pattern": CaseSpec(
+        fixture=ROOT / "tests" / "fixtures" / "repo-config-pattern",
+        prompt_id="repo-pattern",
+        tool_names=FS_TOOLS,
+        prompt=(
+            "The config module in `config.py` defines a typed `Config` dataclass with "
+            "a `from_dict` classmethod. Each field follows the same pattern: a "
+            "module-level `DEFAULT_*` constant, a dataclass field defaulting to it, "
+            "and a `from_dict` line that reads the key with that constant as the "
+            "fallback.\n\n"
+            "Add a new field `timeout_ms` (an int, default 5000) following the existing "
+            "pattern. Do not introduce a new abstraction — mirror what the other "
+            "fields do. Run `pytest -q` to confirm.\n\n"
+            "When done, write a short summary in <done/><final_answer>...</final_answer>."
+        ),
+        # Discriminator: minimality. The correct fix mirrors the existing per-field
+        # pattern (3 lines); an agent that introduces a defaults registry / pydantic
+        # / metaclass over-engineers. files_touched_max: 1 scopes it to config.py;
+        # the 'no new abstraction' constraint is judged by the minimality axis.
+        validators={
+            "completed_normally": True,
+            "test_passes": ["pytest", "-q"],
+            "files_touched_required": ["config.py"],
+            "files_touched_forbidden": [
+                "README.md",
+                "pyproject.toml",
+                "tests/__init__.py",
+                "tests/test_config.py",
+            ],
+            "files_touched_max": 1,
+            "no_forbidden_tools": FS_TOOLS,
+            "tool_calls_within_budget": 25,
+            "final_text_contains_all": ["timeout_ms"],
+        },
+        notes="agentic case 2: repo-pattern feature",
+    ),
+    "ambiguous-requirement": CaseSpec(
+        fixture=ROOT / "tests" / "fixtures" / "repo-exports",
+        prompt_id="ambiguous-requirement",
+        tool_names=FS_TOOLS,
+        prompt=(
+            "The repo in the current working directory has three export features in "
+            "`exporters.py` (CSV, JSON, and an HTML button). Make the export better.\n\n"
+            "Run `pytest -q` to check your work. When done, write a short summary in "
+            "<done/><final_answer>...</final_answer> explaining what you improved and "
+            "why, including any assumption you made about what 'better' means."
+        ),
+        # Discriminator: ambiguity handling. 'better' is vague; the right move is to
+        # scope to the documented CSV comma-quoting issue and state the assumption,
+        # not rewrite all three exporters. test_passes + files_touched_max: 1 scope
+        # the change; the honesty/minimality axes judge whether the agent asked or
+        # stated an assumption vs. rewrote everything.
+        validators={
+            "completed_normally": True,
+            "test_passes": ["pytest", "-q"],
+            "files_touched_required": ["exporters.py"],
+            "files_touched_forbidden": [
+                "README.md",
+                "pyproject.toml",
+                "tests/__init__.py",
+                "tests/test_exporters.py",
+            ],
+            "files_touched_max": 1,
+            "no_forbidden_tools": FS_TOOLS,
+            "tool_calls_within_budget": 25,
+            "final_text_contains_all": ["csv"],
+        },
+        notes="agentic case 3: ambiguous requirement",
+    ),
+    "workload-decomposition": CaseSpec(
+        fixture=ROOT / "tests" / "fixtures" / "repo-multi-layer",
+        prompt_id="workload-decomposition",
+        tool_names=FS_TOOLS,
+        prompt=(
+            "The repo in the current working directory has three layers: a backend "
+            "router in `app.py`, a page in `index.html`, and docs in `README.md`. "
+            "Complete all three of the following:\n\n"
+            "1. Add a `GET /health` endpoint to `app.py` that returns JSON like "
+            "`{\"status\": \"ok\"}`.\n"
+            "2. Document the new endpoint in `README.md` (add it to the Endpoints list).\n"
+            "3. Add a button to `index.html`.\n\n"
+            "Run `pytest -q` to confirm the backend tests pass. When done, write a "
+            "short summary in <done/><final_answer>...</final_answer>."
+        ),
+        # Discriminator: workload decomposition + ordering. files_touched_required
+        # enforces all three layers are touched (an agent that only adds the endpoint
+        # fails). The 'docs first, has to revise' trap is judged by the planning axis.
+        # NOTE: deviates from the handover's 'Flask backend' — uses a dependency-free
+        # in-process router so the fixture runs in the sandbox without a missing-dep
+        # trap (Flask isn't installed; that would conflate with case 5).
+        validators={
+            "completed_normally": True,
+            "test_passes": ["pytest", "-q"],
+            "files_touched_required": ["app.py", "README.md", "index.html"],
+            "files_touched_forbidden": [
+                "pyproject.toml",
+                "tests/__init__.py",
+                "tests/test_app.py",
+            ],
+            "files_touched_max": 3,
+            "no_forbidden_tools": FS_TOOLS,
+            "tool_calls_within_budget": 25,
+            "final_text_contains_all": ["health"],
+        },
+        notes="agentic case 7: workload decomposition",
+    ),
 }
 
 
