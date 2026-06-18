@@ -1,5 +1,6 @@
 """Tests for the FastAPI dashboard."""
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -374,3 +375,195 @@ def test_user_tag_visible_on_result_render(tmp_path: Path) -> None:
     assert r.status_code == 200
     assert "another-user-tag" in r.text
     assert "user-tag-xyz" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Agentic-run routes (Step 8)
+# ---------------------------------------------------------------------------
+
+
+def _seed_agent(db: Database) -> tuple[int, int]:
+    """Seed a run with one agent_run, 3 tool_calls, a results row with a
+    validation_json auto-grade report, and 2 judges x 5 axes of judge scores."""
+    run_id = db.create_run(
+        "agentic-set",
+        ["minimax-m3"],
+        notes="agent seed",
+        prompts=[{"id": "failing-test-fix", "text": "Fix the failing test."}],
+    )
+    db.insert_result(
+        {
+            "run_id": run_id,
+            "prompt_id": "failing-test-fix",
+            "backend_name": "minimax-m3",
+            "model": "minimax-m3:cloud",
+            "output": "all done",
+            "error": None,
+            "latency_ms": 1234,
+            "validation_json": json.dumps(
+                {
+                    "completed_normally": {
+                        "passed": True,
+                        "detail": "emitted final answer within budget",
+                    },
+                    "test_passes": {"passed": True, "detail": "pytest -q green"},
+                    "files_touched_max": {"passed": True, "detail": "touched 1 file"},
+                }
+            ),
+        }
+    )
+    ar_id = db.create_agent_run(run_id, "failing-test-fix", "minimax-m3")
+    db.insert_tool_call(
+        ar_id, 1, "read_file", {"path": "word_tools.py"},
+        {"content": "def split(s): return s.split()"}, ok=True, error=None, duration_ms=12,
+    )
+    db.insert_tool_call(
+        ar_id, 2, "edit_file", {"path": "word_tools.py", "old": "x", "new": "y"},
+        {"ok": True}, ok=True, error=None, duration_ms=8,
+    )
+    db.insert_tool_call(
+        ar_id, 3, "run_shell", {"cmd": ["pytest", "-q"]},
+        {"rc": 0, "stdout": "3 passed"}, ok=True, error=None, duration_ms=450,
+    )
+    db.finish_agent_run(
+        ar_id, final_answer="all done", total_steps=3, completed_normally=True,
+    )
+    for judge, model in [
+        ("nemotron-3-ultra", "nemotron-3-ultra:cloud"),
+        ("gemma4-31b", "gemma4:31b-cloud"),
+    ]:
+        for axis, score in [
+            ("planning", 5), ("recovery", 4), ("honesty", 5),
+            ("minimality", 4), ("safety", 5),
+        ]:
+            db.insert_judge_score(
+                ar_id, axis, judge, score, judge_model=model,
+                evidence=f"{judge} {axis} evidence", raw_response="{}", latency_ms=200,
+            )
+    db.finish_run(run_id)
+    return run_id, ar_id
+
+
+def test_agent_list_renders(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id, ar_id = _seed_agent(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{run_id}/agent")
+    assert r.status_code == 200
+    assert "Agent runs" in r.text
+    assert "failing-test-fix" in r.text
+    assert "minimax-m3" in r.text
+    assert f'href="/runs/{run_id}/agent/{ar_id}"' in r.text
+    # Auto-grade pass count (3/3) and judge count (10) surface in the table.
+    assert "3/3" in r.text
+    assert ">10<" in r.text
+
+
+def test_agent_list_missing_run(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get("/runs/99/agent")
+    assert r.status_code == 404
+
+
+def test_agent_list_empty_renders(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id = db.create_run("set", ["b1"])
+    db.finish_run(run_id)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{run_id}/agent")
+    assert r.status_code == 200
+    assert "No agent runs yet" in r.text
+
+
+def test_agent_detail_renders(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id, ar_id = _seed_agent(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{run_id}/agent/{ar_id}")
+    assert r.status_code == 200
+    assert "Agent run #" in r.text
+    # Auto-grade report with check names + pass markers.
+    assert "completed_normally" in r.text
+    assert "test_passes" in r.text
+    assert "pass" in r.text
+    # Judge panel: an axis header and an evidence block.
+    assert "planning" in r.text
+    assert "Evidence" in r.text
+    # Audit trail shows the tool names.
+    assert "read_file" in r.text
+    assert "run_shell" in r.text
+    # Final answer.
+    assert "all done" in r.text
+
+
+def test_agent_detail_audit_trail_in_step_order(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id, ar_id = _seed_agent(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{run_id}/agent/{ar_id}")
+    assert r.status_code == 200
+    body = r.text
+    p_read = body.find("read_file")
+    p_edit = body.find("edit_file")
+    p_shell = body.find("run_shell")
+    assert p_read != -1 and p_edit != -1 and p_shell != -1
+    assert p_read < p_edit < p_shell
+
+
+def test_agent_detail_missing_agent(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id, _ = _seed_agent(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{run_id}/agent/9999")
+    assert r.status_code == 404
+
+
+def test_agent_detail_agent_run_not_in_run(tmp_path: Path) -> None:
+    # An agent_run that exists but belongs to a different run_id is a 404.
+    db = Database(tmp_path / "r.db")
+    _run_id, ar_id = _seed_agent(db)
+    other_run_id = db.create_run("other", ["b2"])
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{other_run_id}/agent/{ar_id}")
+    assert r.status_code == 404
+
+
+def test_agent_detail_missing_run(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    _run_id, ar_id = _seed_agent(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/9999/agent/{ar_id}")
+    assert r.status_code == 404
+
+
+def test_run_detail_links_to_agent_view(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id, _ar_id = _seed_agent(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{run_id}")
+    assert r.status_code == 200
+    assert "Agent runs" in r.text
+    assert f'href="/runs/{run_id}/agent"' in r.text
+
+
+def test_compare_shows_judge_medians(tmp_path: Path) -> None:
+    db = Database(tmp_path / "r.db")
+    run_id, _ar_id = _seed_agent(db)
+    app = create_app(tmp_path / "r.db")
+    client = TestClient(app)
+    r = client.get(f"/runs/{run_id}/compare?prompt=failing-test-fix")
+    assert r.status_code == 200
+    assert "Judge medians" in r.text
+    assert "planning" in r.text
+    assert "minimax-m3" in r.text
+    # planning median for both judges = median(5,5) = 5.0
+    assert "5.0" in r.text

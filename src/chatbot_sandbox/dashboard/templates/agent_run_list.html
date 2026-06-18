@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Agent runs · Run #{{ run.id }} · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>Agent runs <small class="muted">Run #{{ run.id }}</small></h1>
+<p class="muted">{{ agent_runs|length }} agent run{{ "" if agent_runs|length == 1 else "s" }}. <a href="/runs/{{ run.id }}/leaderboard">Leaderboard →</a></p>
+
+{% if agent_runs %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>#</th><th>Prompt</th><th>Backend</th><th>Steps</th>
+      <th>Completed</th><th>Auto-grade</th><th>Judges</th><th>Final answer</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for ar in agent_runs %}
+  <tr>
+    <td><a href="/runs/{{ run.id }}/agent/{{ ar.id }}">#{{ ar.id }}</a></td>
+    <td><code>{{ ar.prompt_id }}</code>
+      {% if ar.prompt_text %}<div class="muted">{{ ar.prompt_text[:120] }}</div>{% endif %}
+    </td>
+    <td><code>{{ ar.backend_name }}</code></td>
+    <td>{{ ar.total_steps }}</td>
+    <td>{% if ar.completed %}<span class="ok">yes</span>{% else %}<span class="err">no</span>{% endif %}</td>
+    <td>{{ ar.auto_pass }}</td>
+    <td>{{ ar.judge_count }}</td>
+    <td><span class="muted">{{ ar.final_answer_preview }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No agent runs yet.</p>
+{% endif %}
+{% endblock %}

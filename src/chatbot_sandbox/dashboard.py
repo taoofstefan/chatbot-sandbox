@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import shutil
 import sqlite3
 import tempfile
@@ -127,12 +128,14 @@ def create_app(db_path: Path) -> FastAPI:
         if run_row is None:
             raise HTTPException(status_code=404, detail="run not found")
         results = db.get_results(run_id)
+        agent_run_count = len(db.list_agent_runs_for_run(run_id))
         return templates.TemplateResponse(
             request,
             "run.html",
             {
                 "run": _run_to_dict(run_row),
                 "results": [_result_to_dict(r, db) for r in results],
+                "agent_run_count": agent_run_count,
             },
         )
 
@@ -177,6 +180,7 @@ def create_app(db_path: Path) -> FastAPI:
             d["diff_partner_id"] = first_id
             blocks.append(d)
         templates_ = request.app.state.templates
+        agent_summary = _agent_compare_summary(db, run_id, prompt)
         return templates_.TemplateResponse(
             request,
             "compare.html",
@@ -184,6 +188,76 @@ def create_app(db_path: Path) -> FastAPI:
                 "run": _run_to_dict(run_row),
                 "prompt_id": prompt,
                 "blocks": blocks,
+                "agent_summary": agent_summary,
+                "axes": _JUDGE_AXES,
+            },
+        )
+
+    @app.get("/runs/{run_id}/agent", response_class=HTMLResponse)
+    def agent_run_list(request: Request, run_id: int) -> HTMLResponse:
+        run_row = db.get_run(run_id)
+        if run_row is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        agent_rows = db.list_agent_runs_for_run(run_id)
+        prompt_text = _prompt_text_map(run_row)
+        results_by_key = _results_by_key(db, run_id)
+        rows = [
+            _agent_run_summary_row(ar, results_by_key, prompt_text, db)
+            for ar in agent_rows
+        ]
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(
+            request,
+            "agent_run_list.html",
+            {"run": _run_to_dict(run_row), "agent_runs": rows},
+        )
+
+    @app.get("/runs/{run_id}/agent/{agent_run_id}", response_class=HTMLResponse)
+    def agent_run_detail(
+        request: Request, run_id: int, agent_run_id: int
+    ) -> HTMLResponse:
+        run_row = db.get_run(run_id)
+        if run_row is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        ar = db.get_agent_run(agent_run_id)
+        if ar is None or int(ar["run_id"]) != run_id:
+            raise HTTPException(status_code=404, detail="agent run not found")
+        prompt_text = _prompt_text_map(run_row)
+        tool_calls = [
+            _tool_call_to_dict(tc)
+            for tc in db.get_tool_calls_for_agent_run(agent_run_id)
+        ]
+        judges = _judge_panel_for_agent_run(db, agent_run_id)
+        auto_grade = _auto_grade_for(db, run_id, ar["prompt_id"], ar["backend_name"])
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(
+            request,
+            "agent_run_detail.html",
+            {
+                "run": _run_to_dict(run_row),
+                "agent_run": _agent_run_to_dict(ar),
+                "prompt_text": prompt_text.get(ar["prompt_id"], ""),
+                "tool_calls": tool_calls,
+                "judges": judges,
+                "axes": _JUDGE_AXES,
+                "auto_grade": auto_grade,
+            },
+        )
+
+    @app.get("/runs/{run_id}/leaderboard", response_class=HTMLResponse)
+    def leaderboard_view(request: Request, run_id: int) -> HTMLResponse:
+        run_row = db.get_run(run_id)
+        if run_row is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        rows = db.agent_leaderboard(run_id)
+        templates_ = request.app.state.templates
+        return templates_.TemplateResponse(
+            request,
+            "leaderboard.html",
+            {
+                "run": _run_to_dict(run_row),
+                "rows": rows,
+                "axes": _JUDGE_AXES,
             },
         )
 
@@ -432,6 +506,197 @@ def _result_to_dict(row: sqlite3.Row, db: Database | None = None) -> dict[str, A
     d["prompt_tag_list"] = prompt_tags
     d["user_tag_list"] = user_tags
     return d
+
+
+# ---------------------------------------------------------------------------
+# Agentic-run helpers (migration 0004: agent_runs, tool_calls, judge_scores)
+# ---------------------------------------------------------------------------
+
+_JUDGE_AXES = ("planning", "recovery", "honesty", "minimality", "safety")
+
+
+def _parse_json(s: str | None) -> Any:
+    if not s:
+        return None
+    try:
+        return json.loads(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _prompt_text_map(run_row: sqlite3.Row | None) -> dict[str, str]:
+    """Parse a run's stored prompts_json snapshot into {prompt_id: text}."""
+    out: dict[str, str] = {}
+    if run_row is None:
+        return out
+    parsed = _parse_json(run_row["prompts_json"])
+    if isinstance(parsed, list):
+        for p in parsed:
+            if isinstance(p, dict) and "id" in p and "text" in p:
+                out[str(p["id"])] = str(p["text"])
+    return out
+
+
+def _results_by_key(db: Database, run_id: int) -> dict[tuple[str, str], sqlite3.Row]:
+    """Index a run's results by (prompt_id, backend_name); latest wins."""
+    out: dict[tuple[str, str], sqlite3.Row] = {}
+    for r in db.get_results(run_id):
+        key = (r["prompt_id"], r["backend_name"])
+        if key not in out or r["id"] > out[key]["id"]:
+            out[key] = r
+    return out
+
+
+def _auto_grade_from_result(row: sqlite3.Row) -> tuple[str, list[dict[str, Any]]]:
+    """Return (auto_pass "n/total", [checks]) from a results.validation_json."""
+    vj = _parse_json(row["validation_json"])
+    if not isinstance(vj, dict) or not vj:
+        return "-", []
+    checks: list[dict[str, Any]] = []
+    passed = 0
+    for name, info in vj.items():
+        ok = isinstance(info, dict) and bool(info.get("passed"))
+        if ok:
+            passed += 1
+        checks.append(
+            {
+                "name": name,
+                "passed": ok,
+                "detail": str(info.get("detail", "")) if isinstance(info, dict) else "",
+            }
+        )
+    return f"{passed}/{len(vj)}", checks
+
+
+def _auto_grade_for(
+    db: Database, run_id: int, prompt_id: str, backend_name: str
+) -> list[dict[str, Any]]:
+    for r in db.get_results(run_id):
+        if r["prompt_id"] == prompt_id and r["backend_name"] == backend_name:
+            _pass, checks = _auto_grade_from_result(r)
+            return checks
+    return []
+
+
+def _agent_run_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    d = _row_to_dict(row)
+    fa = d.get("final_answer") or ""
+    d["final_answer_preview"] = fa[:200]
+    d["completed"] = bool(d.get("completed_normally"))
+    return d
+
+
+def _agent_run_summary_row(
+    row: sqlite3.Row,
+    results_by_key: dict[tuple[str, str], sqlite3.Row],
+    prompt_text: dict[str, str],
+    db: Database,
+) -> dict[str, Any]:
+    d = _agent_run_to_dict(row)
+    d["prompt_text"] = prompt_text.get(str(d.get("prompt_id") or ""), "")
+    d["judge_count"] = len(db.get_judge_scores_for_agent_run(int(d["id"])))
+    result = results_by_key.get((str(d.get("prompt_id", "")), str(d.get("backend_name", ""))))
+    auto_pass, _checks = _auto_grade_from_result(result) if result is not None else ("-", [])
+    d["auto_pass"] = auto_pass
+    return d
+
+
+def _tool_call_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    d = _row_to_dict(row)
+    d["arguments"] = _parse_json(d.get("arguments_json"))
+    d["result"] = _parse_json(d.get("result_json"))
+    d["arguments_pretty"] = _pretty_json(d["arguments"], d.get("arguments_json", ""))
+    d["result_preview"] = _truncate(_pretty_json(d["result"], d.get("result_json", "")), 800)
+    return d
+
+
+def _pretty_json(parsed: Any, raw: str) -> str:
+    if parsed is None:
+        return raw or ""
+    return json.dumps(parsed, indent=2, default=str)
+
+
+def _truncate(s: str, n: int) -> str:
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    if n % 2 == 0:
+        return (s[n // 2 - 1] + s[n // 2]) / 2
+    return float(s[n // 2])
+
+
+def _judge_panel_for_agent_run(
+    db: Database, agent_run_id: int
+) -> list[dict[str, Any]]:
+    """Group judge_scores into one dict per judge with per-axis scores+evidence."""
+    by_judge: dict[str, dict[str, Any]] = {}
+    for sc in db.get_judge_scores_for_agent_run(agent_run_id):
+        name = sc["judge_backend"] or sc["judge_model"] or "unknown"
+        j = by_judge.setdefault(
+            name,
+            {
+                "name": name,
+                "model": sc["judge_model"],
+                "scores": {},
+                "evidence": {},
+                "latency_ms": 0,
+            },
+        )
+        axis = sc["rubric"]
+        j["scores"][axis] = int(sc["score"])
+        j["evidence"][axis] = sc["evidence"] or ""
+        j["latency_ms"] = max(j["latency_ms"], int(sc["latency_ms"] or 0))
+    judges = list(by_judge.values())
+    for j in judges:
+        vals = [float(v) for v in j["scores"].values()]
+        j["median"] = _median(vals)
+    return judges
+
+
+def _agent_compare_summary(
+    db: Database, run_id: int, prompt_id: str
+) -> list[dict[str, Any]]:
+    """Per-backend judge medians + auto-grade for one (run, prompt)."""
+    by_backend: dict[str, dict[str, Any]] = {}
+    for r in db.get_results(run_id):
+        if r["prompt_id"] != prompt_id:
+            continue
+        auto_pass, _checks = _auto_grade_from_result(r)
+        by_backend[r["backend_name"]] = {
+            "backend": r["backend_name"],
+            "auto_pass": auto_pass,
+            "medians": {},
+            "completed": None,
+            "steps": None,
+        }
+    for ar in db.list_agent_runs_for_run(run_id):
+        if ar["prompt_id"] != prompt_id:
+            continue
+        b = by_backend.setdefault(
+            ar["backend_name"],
+            {
+                "backend": ar["backend_name"],
+                "auto_pass": "-",
+                "medians": {},
+                "completed": None,
+                "steps": None,
+            },
+        )
+        b["completed"] = bool(ar["completed_normally"])
+        b["steps"] = int(ar["total_steps"])
+        per_axis: dict[str, list[int]] = {a: [] for a in _JUDGE_AXES}
+        for sc in db.get_judge_scores_for_agent_run(ar["id"]):
+            if sc["rubric"] in per_axis:
+                per_axis[sc["rubric"]].append(int(sc["score"]))
+        for a in _JUDGE_AXES:
+            if per_axis[a]:
+                b["medians"][a] = _median([float(x) for x in per_axis[a]])
+    return sorted(by_backend.values(), key=lambda d: str(d["backend"]))
 
 
 def run_dashboard(

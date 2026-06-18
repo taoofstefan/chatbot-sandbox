@@ -10,6 +10,11 @@
 
 {% include "_run_note.html" %}
 
+{% if agent_run_count %}
+<h2>Agent runs</h2>
+<p><a class="btn" href="/runs/{{ run.id }}/agent">View {{ agent_run_count }} agent run{{ "" if agent_run_count == 1 else "s" }} →</a></p>
+{% endif %}
+
 <h2>Summary</h2>
 {% include "_results.html" %}
 {% endblock %}

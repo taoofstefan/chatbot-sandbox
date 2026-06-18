@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard · Run #{{ run.id }} · Chatbot Sandbox{% endblock %}
+{% block content %}
+<h1>Leaderboard <small class="muted">Run #{{ run.id }}</small></h1>
+<p class="muted">Per-backend auto-grade pass count and median LLM-judge score per axis.</p>
+
+{% if rows %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>Backend</th><th>Cases</th><th>Auto pass</th>
+      {% for axis in axes %}<th>{{ axis }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td><code>{{ r.backend }}</code></td>
+    <td>{{ r.cases }}</td>
+    <td>{{ r.auto_passed }}/{{ r.cases }}</td>
+    {% for axis in axes %}
+    <td>{% if r.medians[axis] %}{{ "%.1f"|format(r.medians[axis]) }}{% else %}—{% endif %}</td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No agent data for this run.</p>
+{% endif %}
+
+<p><a class="btn" href="/runs/{{ run.id }}/agent">← agent runs</a></p>
+{% endblock %}

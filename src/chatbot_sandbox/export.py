@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 
 def _validation_md(row: sqlite3.Row) -> list[str]:
@@ -94,5 +95,51 @@ def export_markdown(run: sqlite3.Row, results: list[sqlite3.Row], path: Path) ->
                 lines.append("")
                 lines.append("Tags: " + " ".join(f"`{t}`" for t in r["tags"].split(",") if t))
             lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+_AGENT_AXES = ("planning", "recovery", "honesty", "minimality", "safety")
+
+
+def export_agent_leaderboard(
+    run: sqlite3.Row,
+    rows: list[dict[str, Any]],
+    path: Path,
+) -> None:
+    """Write an agentic-run leaderboard to Markdown.
+
+    `rows` is the structured per-backend summary from `Database.agent_leaderboard`
+    (each has ``backend``, ``cases``, ``auto_passed``, and ``medians`` keyed by
+    the 5 judge axes). One table row per backend.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    lines.append(f"# Agent leaderboard — run #{run['id']}")
+    lines.append("")
+    lines.append(f"- Prompt set: `{run['prompt_set_name'] or '-'}`")
+    lines.append(f"- Backends: `{run['backend_names']}`")
+    if run["notes"]:
+        lines.append(f"- Notes: {run['notes']}")
+    lines.append("")
+
+    lines.append("## Leaderboard")
+    lines.append("")
+    header = "| Backend | Cases | Auto pass | " + " | ".join(_AGENT_AXES) + " |"
+    sep = "|---|---:|---:|" + "|".join(["---:"] * len(_AGENT_AXES)) + "|"
+    lines.append(header)
+    lines.append(sep)
+    for r in rows:
+        medians = r.get("medians", {})
+        cells = [
+            str(r["backend"]),
+            str(r["cases"]),
+            f"{r['auto_passed']}/{r['cases']}",
+        ]
+        for axis in _AGENT_AXES:
+            m = medians.get(axis, 0.0)
+            cells.append(f"{float(m):.1f}" if m else "-")
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")

@@ -22,6 +22,30 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+# The 5 LLM-judge axes (kept here so db, cli, dashboard, and export agree on
+# the canonical order without a cross-module import).
+_JUDGE_AXES: tuple[str, ...] = ("planning", "recovery", "honesty", "minimality", "safety")
+
+
+def _median(values: list[int]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    if n % 2 == 0:
+        return (s[n // 2 - 1] + s[n // 2]) / 2
+    return float(s[n // 2])
+
+
+def _parse_validation_json(raw: str | None) -> Any:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+
+
 def build_run_meta(command: str) -> dict[str, str]:
     """Build the run-metadata snapshot stored in ``runs.meta_json``.
 
@@ -458,3 +482,65 @@ class Database:
                 (r["run_id"], r["prompt_id"], r["backend_name"]),
             ).fetchone()
             return row  # type: ignore[no-any-return]
+
+    def agent_leaderboard(self, run_id: int) -> list[dict[str, Any]]:
+        """Per-backend leaderboard for an agentic run.
+
+        For each backend in the run, returns: ``backend``, ``cases`` (number
+        of agent runs), ``auto_passed`` (cases where every auto-grade check
+        passed), and ``medians`` (per-axis median judge score across all the
+        backend's agent runs). Backends with no agent runs are omitted.
+
+        This is the single aggregation behind ``cbs leaderboard``,
+        ``cbs export-agent``, and the dashboard leaderboard view.
+        """
+        results = self.get_results(run_id)
+        agent_runs = self.list_agent_runs_for_run(run_id)
+
+        per_backend: dict[str, dict[str, Any]] = {}
+
+        def _bucket(name: str) -> dict[str, Any]:
+            return per_backend.setdefault(
+                name,
+                {
+                    "backend": name,
+                    "cases": 0,
+                    "auto_passed": 0,
+                    "medians": {a: [] for a in _JUDGE_AXES},
+                },
+            )
+
+        # Auto-grade is case-level: a case "passes" only if every check passed.
+        for r in results:
+            vj = _parse_validation_json(r["validation_json"])
+            all_passed = isinstance(vj, dict) and bool(vj) and all(
+                isinstance(c, dict) and c.get("passed") for c in vj.values()
+            )
+            b = _bucket(r["backend_name"])
+            b["cases"] += 1
+            if all_passed:
+                b["auto_passed"] += 1
+
+        # Ensure backends with agent_runs but no results row are counted, and
+        # collect their judge scores into the per-axis lists.
+        for ar in agent_runs:
+            b = _bucket(ar["backend_name"])
+            for sc in self.get_judge_scores_for_agent_run(ar["id"]):
+                axis = sc["rubric"]
+                if axis in b["medians"]:
+                    b["medians"][axis].append(int(sc["score"]))
+
+        rows: list[dict[str, Any]] = []
+        for b in per_backend.values():
+            if not b["cases"] and not any(b["medians"].values()):
+                continue  # no agent data for this backend
+            rows.append(
+                {
+                    "backend": b["backend"],
+                    "cases": b["cases"],
+                    "auto_passed": b["auto_passed"],
+                    "medians": {a: _median(b["medians"][a]) for a in _JUDGE_AXES},
+                }
+            )
+        rows.sort(key=lambda d: str(d["backend"]))
+        return rows

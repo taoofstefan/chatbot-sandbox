@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Agent run #{{ agent_run.id }} · Run #{{ run.id }}{% endblock %}
+{% block content %}
+<h1>Agent run #{{ agent_run.id }} <small class="muted">Run #{{ run.id }}</small></h1>
+<dl class="meta">
+  <dt>Prompt</dt><dd><code>{{ agent_run.prompt_id }}</code></dd>
+  <dt>Backend</dt><dd><code>{{ agent_run.backend_name }}</code></dd>
+  <dt>Steps</dt><dd>{{ agent_run.total_steps }}</dd>
+  <dt>Completed</dt><dd>{% if agent_run.completed %}<span class="ok">yes</span>{% else %}<span class="err">no</span>{% endif %}</dd>
+</dl>
+{% if prompt_text %}<pre class="output">{{ prompt_text }}</pre>{% endif %}
+
+<h2>Auto-grade</h2>
+{% if auto_grade %}
+<table class="table">
+  <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for c in auto_grade %}
+  <tr>
+    <td><code>{{ c.name }}</code></td>
+    <td>{% if c.passed %}<span class="ok">pass</span>{% else %}<span class="err">fail</span>{% endif %}</td>
+    <td>{{ c.detail }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No auto-grade report.</p>{% endif %}
+
+<h2>LLM-judge panel</h2>
+{% if judges %}
+<table class="table">
+  <thead><tr><th>Judge</th>{% for axis in axes %}<th>{{ axis }}</th>{% endfor %}<th>median</th></tr></thead>
+  <tbody>
+  {% for j in judges %}
+  <tr>
+    <td><code>{{ j.name }}</code>{% if j.model %}<div class="muted">{{ j.model }}</div>{% endif %}</td>
+    {% for axis in axes %}<td>{{ j.scores.get(axis, "—") }}</td>{% endfor %}
+    <td>{{ "%.1f"|format(j.median) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<details><summary>Evidence</summary>
+{% for j in judges %}
+<section>
+  <strong>{{ j.name }}</strong>
+  <dl class="meta">
+  {% for axis in axes %}
+    <dt>{{ axis }}</dt><dd>{{ j.evidence.get(axis, "") or "—" }}</dd>
+  {% endfor %}
+  </dl>
+</section>
+{% endfor %}
+</details>
+{% else %}<p class="muted">No judge scores.</p>{% endif %}
+
+<h2>Audit trail</h2>
+{% if tool_calls %}
+<table class="table">
+  <thead><tr><th>Step</th><th>Tool</th><th>Args</th><th>Status</th><th>Duration</th><th>Output</th></tr></thead>
+  <tbody>
+  {% for tc in tool_calls %}
+  <tr>
+    <td>{{ tc.step_index }}</td>
+    <td><code>{{ tc.tool_name }}</code></td>
+    <td><pre class="output">{{ tc.arguments_pretty }}</pre></td>
+    <td>{% if tc.ok %}<span class="ok">ok</span>{% else %}<span class="err">err</span>{% endif %}</td>
+    <td>{{ tc.duration_ms }}ms</td>
+    <td>{% if tc.error %}<pre class="err">{{ tc.error }}</pre>{% else %}<pre class="output">{{ tc.result_preview }}</pre>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No tool calls.</p>{% endif %}
+
+<h2>Final answer</h2>
+{% if agent_run.final_answer %}<pre class="output">{{ agent_run.final_answer }}</pre>{% else %}<p class="muted">No final answer.</p>{% endif %}
+
+<p><a class="btn" href="/runs/{{ run.id }}/agent">← back to agent runs</a></p>
+{% endblock %}

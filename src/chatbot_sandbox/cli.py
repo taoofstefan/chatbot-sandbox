@@ -37,7 +37,7 @@ from .backends.base import Backend, BackendError
 from .compare import diff_outputs, side_by_side, summary_table
 from .config import BackendConfig, BackendSet, Prompt, PromptSet
 from .db import Database, build_run_meta
-from .export import export_markdown
+from .export import export_agent_leaderboard, export_markdown
 from .graders import KNOWN_CHECKS
 from .graders import grade as grade_output
 from .runner import RunContext, run_matrix
@@ -754,6 +754,58 @@ def judge_cmd(
 
     console.print(_agent_summary(db, run_id, with_judges=True))
     console.print(f"re-judged run_id={run_id}")
+
+
+@app.command("leaderboard")
+def leaderboard_cmd(
+    run_id: int = typer.Argument(..., help="Run id to summarize."),
+    db_path: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """Print a per-backend agent leaderboard for a run.
+
+    One row per backend: number of cases, auto-grade pass count, and the
+    median LLM-judge score for each of the 5 axes. Reads the persisted
+    agent_runs + judge_scores (no model calls).
+    """
+    db = _db(db_path)
+    if db.get_run(run_id) is None:
+        raise typer.BadParameter(f"no such run: {run_id}")
+    rows = db.agent_leaderboard(run_id)
+    if not rows:
+        console.print("[yellow]no agent data for this run[/yellow]")
+        return
+    table = Table(title=f"Leaderboard — run {run_id}")
+    table.add_column("Backend")
+    table.add_column("Cases", justify="right")
+    table.add_column("Auto pass", justify="right")
+    for axis in _JUDGE_AXES:
+        table.add_column(axis, justify="right")
+    for r in rows:
+        cells = [str(r["backend"]), str(r["cases"]), f"{r['auto_passed']}/{r['cases']}"]
+        for axis in _JUDGE_AXES:
+            m = r["medians"][axis]
+            cells.append(f"{m:.1f}" if m else "-")
+        table.add_row(*cells)
+    console.print(table)
+
+
+@app.command("export-agent")
+def export_agent(
+    run_id: int = typer.Argument(..., help="Run id to export."),
+    out: Path = typer.Option(
+        Path("exports/agent-run-{run_id}.md"), "--out", "-o"
+    ),
+    db_path: Path | None = typer.Option(None, "--db"),
+) -> None:
+    """Export a run's agent leaderboard to a Markdown file."""
+    db = _db(db_path)
+    run_row = db.get_run(run_id)
+    if run_row is None:
+        raise typer.BadParameter(f"no such run: {run_id}")
+    rows = db.agent_leaderboard(run_id)
+    final_out = Path(str(out).replace("{run_id}", str(run_id)))
+    export_agent_leaderboard(run_row, rows, final_out)
+    console.print(f"wrote {final_out}")
 
 
 @app.command("list")

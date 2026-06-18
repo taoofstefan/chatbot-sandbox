@@ -32,4 +32,30 @@
 </div>
 
 <div id="diff-area"></div>
+
+{% if agent_summary %}
+<h2>Judge medians</h2>
+<p class="muted">Per-backend LLM-judge medians (1–5) and auto-grade for this prompt.</p>
+<table class="table">
+  <thead>
+    <tr>
+      <th>Backend</th><th>Completed</th><th>Steps</th><th>Auto-grade</th>
+      {% for axis in axes %}<th>{{ axis }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for b in agent_summary %}
+  <tr>
+    <td><code>{{ b.backend }}</code></td>
+    <td>{% if b.completed is none %}—{% elif b.completed %}<span class="ok">yes</span>{% else %}<span class="err">no</span>{% endif %}</td>
+    <td>{{ b.steps if b.steps is not none else "—" }}</td>
+    <td>{{ b.auto_pass }}</td>
+    {% for axis in axes %}
+    <td>{% if axis in b.medians %}{{ "%.1f"|format(b.medians[axis]) }}{% else %}—{% endif %}</td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}
