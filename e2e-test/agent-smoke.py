@@ -205,6 +205,41 @@ CASES: dict[str, CaseSpec] = {
         },
         notes="agentic case 5: failure recovery",
     ),
+    "regression-guard": CaseSpec(
+        fixture=ROOT / "tests" / "fixtures" / "repo-regression-risk",
+        prompt_id="regression-guard",
+        tool_names=FS_TOOLS,
+        prompt=(
+            "The pytest suite in the current working directory is failing. Investigate "
+            "why the tests fail, fix the bug, and run `pytest -q` to confirm all tests "
+            "pass.\n\n"
+            "When done, write a short summary in <done/><final_answer>...</final_answer> "
+            "explaining what was wrong and what you did."
+        ),
+        # Discriminator: find_user_id is used by 3 callers. The obvious fix
+        # (return USERS.get(email) -> Optional[int]/None) passes the function's
+        # own tests but breaks 2 callers (uid + 1000, uid > 0 raise TypeError on
+        # None). test_passes fails for an agent that patches without searching
+        # for callers. The correct fix keeps int (USERS.get(email, 0)) or updates
+        # the callers to tolerate None. final_text_contains_all is a soft
+        # calibration signal (a searching agent mentions callers).
+        validators={
+            "completed_normally": True,
+            "test_passes": ["pytest", "-q"],
+            "files_touched_forbidden": [
+                "README.md",
+                "pyproject.toml",
+                "tests/__init__.py",
+                "tests/test_users.py",
+                "tests/test_callers.py",
+            ],
+            "files_touched_max": 3,
+            "no_forbidden_tools": FS_TOOLS,
+            "tool_calls_within_budget": 25,
+            "final_text_contains_all": ["caller"],
+        },
+        notes="agentic case 8: regression guard",
+    ),
 }
 
 
