@@ -4,11 +4,16 @@ Handover document for the next session. The planned MVP, quality-of-life, and
 engineering-hygiene items (#1-#12) are all complete, and a repo-hygiene pass
 (fixing the CI install step, packaging URLs, dropping a dead dev dep,
 untracking smoke exports) landed on `main` — see `CHANGELOG.md` and `git log`.
-CI still has a pytest tier red on Linux (now exposed because the install fix let
-Linux CI run pytest for the first time); tracked as **issue #9** — do it first.
-The active backlog is in **GitHub issues**; the **Stretch / ideas** section
-below and the agentic-benchmark steps (7-10) in `HANDOVER_AGENTIC.md` are
-captured there. Start with issue #9, then issue #1 (the agent epic).
+The agentic benchmark toolchain is also landed: Steps 7, 8, and 10
+(`cbs run-agent`/`judge`/`leaderboard`/`export-agent` CLI + dashboard agent
+audit-trail routes + leaderboard view) are done and on `main` (commits
+`6bb6225`, `bdee672`). The only remaining agentic work is **Step 9** —
+calibrating the 7 remaining cases against real models — plus the one-shot
+full benchmark run; both need Ollama credits + human judgment, not code (see
+`HANDOVER_AGENTIC.md`). CI still has a pytest tier red on Linux (now exposed
+because the install fix let Linux CI run pytest for the first time); tracked
+as **issue #9** — do it first. The active backlog is in **GitHub issues**;
+the **Stretch / ideas** section below is captured there.
 
 Each completed item keeps a one-line status note for traceability.
 
@@ -114,17 +119,17 @@ Each completed item keeps a one-line status note for traceability.
    *extra*, not a dependency-group, so `--dev` installs nothing) and
    `uv run pytest` to confirm the baseline still passes locally (then
    `uv run ruff check . && uv run mypy src`). **Caveat:** this is green on
-   Windows (282 pass), but **CI on `main` is currently RED** — the install
+   Windows (308 pass), but **CI on `main` is currently RED** — the install
    fix in `c4a913c` let Linux CI run pytest for the first time and exposed
    Windows-only agent tests. Local-green ≠ CI-green here; see **issue #9**.
 2. Start with **issue #9** (make the 4 agent test fixtures cross-platform —
-   small: 2 test files, no `src/` changes) **before** #1; it's the CI-red
-   blocker on `main`. Then **issue #1** (the agent epic — `cbs run-agent`
-   CLI + cross-model runner; see `HANDOVER_AGENTIC.md` step 7). The backlog
-   lives in **GitHub issues** now; work **one branch per issue**, agent-sized
-   (1-4 files, validatable with ruff/mypy/pytest). The **Stretch / ideas**
-   section below and `HANDOVER_AGENTIC.md` steps 7-10 are the source material
-   the issues were cut from.
+   small: 2 test files, no `src/` changes); it's the CI-red blocker on
+   `main`. Then **Step 9** of the agentic benchmark (calibrate the 7
+   remaining cases against real Ollama models — see `HANDOVER_AGENTIC.md`;
+   requires credits + human judgment, not pure code). The **Stretch / ideas**
+   section below is the remaining source material for new GitHub issues.
+   Work **one branch per issue**, agent-sized (1-4 files, validatable with
+   ruff/mypy/pytest).
 3. Schema evolves only through numbered migrations
    (`src/chatbot_sandbox/migrations/NNNN_*.sql`); never hand-edit the live
    schema or an existing migration.

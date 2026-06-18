@@ -1,11 +1,26 @@
 # Handover — Agentic Benchmark Subsystem (Steps 7–10)
 
-**Status:** Steps 1–6 of the design doc (`docs/agentic-benchmark-design.md`) are
-done, tested, and committed (`06d0162`). The agent solves the failing-test-fix
-fixture end-to-end against `minimax-m3:cloud` in ~5–7 tool calls, all 7
-auto-graders pass, and a 3-judge panel (nemotron, gemma, glm) all give 5/5
-on every axis. This file covers the remaining work: the CLI, the dashboard,
-the other 7 fixtures, and the cross-model leaderboard.
+**Status (2026-06-18):** Steps 1–8 and 10 are **done, tested, and on
+`main`**. The agent solves the failing-test-fix fixture end-to-end against
+`minimax-m3:cloud` in ~5–7 tool calls, all 7 auto-graders pass, and a
+3-judge panel (nemotron, gemma, glm) gives 5/5 on every axis. The full
+benchmark toolchain is wired up: `cbs run-agent` / `cbs judge` /
+`cbs leaderboard` / `cbs export-agent` CLI, the dashboard agent audit-trail
+routes, and the leaderboard view. **The only remaining work is Step 9**
+(calibrate the other 7 cases against real models) and the one-shot full
+benchmark run — both need your Ollama credits + human judgment, not code.
+
+---
+
+## What landed since the last handover
+
+| Step | Commit | What |
+|---|---|---|
+| 7 | `6bb6225` | `cbs run-agent` + `cbs judge` CLI; `agent-prompts.yaml` (8 cases) + `agent-backends.yaml` (5-model pool); `agent-smoke.py` → thin wrapper; `tests/test_cli_agent.py`. `CommandBackend.chat()` makes the whole surface network-free-testable. |
+| 8 | `bdee672` | Dashboard routes `/runs/{id}/agent`, `/runs/{id}/agent/{agent_run_id}`, compare medians, run.html link. New templates `agent_run_list.html`, `agent_run_detail.html`. |
+| 10 | `bdee672` | `db.agent_leaderboard()` (centralized aggregation), `cbs leaderboard`, `cbs export-agent`, `/runs/{id}/leaderboard` + `leaderboard.html`. `tests/test_cli_leaderboard.py`. |
+
+**Test totals:** 308 passing. ruff clean. mypy clean across 31 source files.
 
 ---
 
@@ -14,36 +29,54 @@ the other 7 fixtures, and the cross-model leaderboard.
 ```
 src/chatbot_sandbox/agent/
   __init__.py            public surface: Sandbox, ToolRegistry, run_agent,
-                         grade_run, judge_run, judge_panel, RunState, etc.
+                         grade_run, judge_run, judge_panel, RunState,
+                         agent_run_to_state, run_state_to_dict, etc.
   state.py               RunState, ModelResponse, ToolCallRecord dataclasses
-  sentinel.py            <tool_call> / <done/> parser (robust to malformed input)
+  sentinel.py             <done/> parser (robust to malformed input)
   sandbox.py             per-run temp-dir + path containment
   tools_base.py          Tool, ToolExecutor, ToolRegistry
   filesystem_tools.py    list_dir, read_file, edit_file, write_file, search_files
   shell_tool.py          run_shell with 9-pattern safety blocklist
   communication_tools.py draft_message, approve_message, send_message
-  driver.py              run_agent(chat, sandbox, registry, ...) — the loop
+  driver.py              run_agent(...) — the loop; agent_run_to_state
+                         reconstructs a RunState from DB rows for re-judging
   graders.py             11 auto-graders (test_passes, files_touched_*, etc.)
   judges.py              LLM-judge system: parse, judge_run, judge_panel
 
 src/chatbot_sandbox/backends/
   base.py                + Backend.supports_chat, + Backend.chat(), + ChatResponse
   ollama.py              + chat() wired to /api/chat with tools=[...]
+  command.py             + chat() — feeds last user msg to the command; enables
+                         network-free agent + judge tests via type:command
+                         backends that print <done/> or fixed judge JSON
 
 src/chatbot_sandbox/migrations/
   0003_validation.sql    adds results.validation_json (single-turn grading)
   0004_agent_runs.sql    adds agent_runs, tool_calls, judge_scores
 
-src/chatbot_sandbox/db.py
-  + create_agent_run, finish_agent_run, insert_tool_call, insert_judge_score
-  + get_agent_run, list_agent_runs_for_run, get_tool_calls_for_agent_run,
-    get_judge_scores_for_agent_run, get_agent_run_for_result
+src/chatbot_sandbox/
+  config.py              + AgentConfig.fixture (path resolved against CWD)
+  db.py                  create/finish_agent_run, insert_tool_call/judge_score,
+                         clear_judge_scores, get_* accessors,
+                         agent_leaderboard(run_id) — shared aggregation
+                         (+ _JUDGE_AXES, _median, _parse_validation_json)
+  cli.py                 + run-agent, judge, leaderboard, export-agent;
+                         validate learns agent: blocks
+  dashboard.py           + /agent, /agent/{id}, /leaderboard routes +
+                         compare medians + run.html agent link
+  export.py              + export_agent_leaderboard()
 
-e2e-test/agent-smoke.py    1-case smoke + 3-judge panel + DB persistence
-tests/fixtures/repo-bug-1/ case 1: failing-test-fix (Python, pytest)
+e2e-test/
+  agent-prompts.yaml     8 cases (id/text/tags/notes/agent/validators)
+  agent-backends.yaml    5-model Ollama pool (agents + judges share one file;
+                         judges selected via --judges)
+  agent-smoke.py         thin wrapper shelling to `cbs run-agent`
+
+tests/
+  test_cli_agent.py       run-agent / judge / validate (type:command)
+  test_cli_leaderboard.py leaderboard / export-agent / dashboard view
+  fixtures/repo-bug-1/    case 1: failing-test-fix (Python, pytest)
 ```
-
-**Test totals:** 268 (179 prior + 89 new). ruff clean. mypy clean across 31 source files.
 
 **Key design decisions already made and locked in:**
 
@@ -56,117 +89,62 @@ tests/fixtures/repo-bug-1/ case 1: failing-test-fix (Python, pytest)
 - **`test_passes` uses the command string as-is** (e.g. `["pytest", "-q"]`).
   The `python -m pytest` form is unreliable because the system `python`
   may not be the venv python. Documented in the smoke script.
-- **Judge panel is 3 cloud models, none of which is the model under test.**
+- **Judge panel is cloud models, none of which is the model under test.**
   Median aggregation per axis. Failures → all-1 score (failing open to the
   worst score, not the best, so a broken judge never inflates a model).
+  `_JUDGE_AXES = (planning, recovery, honesty, minimality, safety)` is
+  canonical in `db.py` and reused by CLI/export/dashboard.
+- **Leaderboard aggregation is centralized in `Database.agent_leaderboard()`**
+  — one method, shared by `cbs leaderboard`, `cbs export-agent`, and the
+  dashboard `/runs/{id}/leaderboard` route. Per backend: auto-grade pass
+  count + per-axis judge median. Don't duplicate this logic.
 - **Grade report goes into both `results.validation_json` and the structured
-  `judge_scores` table.** The dashboard can read either; auto-graders live
-  in validation_json, judge scores live in their own table.
+  `judge_scores` table.** Auto-graders live in validation_json, judge scores
+  in their own table; the dashboard reads either.
 - **Sandbox-mode Windows quirks are documented and tested.** rg output parser
   uses a regex (not split); short-name vs long-name path comparison; trailing
   colon in matched rg lines. All caught during real testing.
 
 ---
 
-## Step 7 — `cbs run-agent` CLI and the cross-model runner
+## Step 7 — `cbs run-agent` CLI and the cross-model runner — DONE
 
-**Goal:** turn `e2e-test/agent-smoke.py` into a real benchmark command. The
-smoke currently hard-codes `minimax-m3:cloud` and the failing-test-fix
-fixture. Step 7 makes it general.
-
-**What to build:**
-
-1. **New file: `e2e-test/agent-prompts.yaml`** — 8 prompts (case 1 exists, 7
-   more to be added in step 9). Each has the same shape as the current
-   failing-test-fix entry, with `agent:` and `validators:` blocks.
-
-2. **New file: `e2e-test/agent-backends.yaml`** — the 5 cloud models under
-   test (minimax, nemotron, gemma, qwen, glm) + 3 judge entries (different
-   models, never the same as the agent under test).
-
-3. **New file: `src/chatbot_sandbox/cli.py` extensions** — two new commands
-   and a new option on `validate`:
-   - `cbs run-agent -p agent-prompts.yaml -b agent-backends.yaml -j 2
-      --db results.db --notes "..."`
-   - `cbs judge <run_id> -p agent-prompts.yaml -b agent-backends.yaml
-      --judges "..." --db results.db`
-   - `cbs validate` learns about `agent:` blocks in prompt YAMLs
-   - `--max-steps N` per-prompt override (default 25)
-   - `--no-judges` flag to skip the panel for cheap re-runs
-
-4. **Refactor `e2e-test/agent-smoke.py`** into a thin wrapper that calls
-   `cbs run-agent` for the failing-test-fix case. The smoke becomes a
-   fast "does it still work?" check, not a benchmark.
-
-5. **The CLI's `run-agent` command should:**
-   - Load prompts (filter by `--prompt` if specified)
-   - Load backends (filter by `--backend` if specified)
-   - For each (prompt, backend) pair: run the agent, grade it, persist
-   - Run with `-j N` to run N agent runs in parallel
-   - For judge re-runs: read existing `agent_runs` rows, re-run the
-     judge panel against the stored audit trail
-   - Print a summary table at the end (1 row per model, columns per axis)
-
-**Test plan:**
-
-- `tests/test_cli.py` — exercise the new commands with the `CliRunner`,
-  using a mock chat backend. No real model calls.
-- The smoke runner (`e2e-test/agent-smoke.py`) still passes end-to-end.
-- New `tests/test_cli_agent.py` for the agent-specific CLI surface.
-
-**Estimated scope:** ~250 lines of new CLI + 200 lines of new test.
-~1 hour to write + 30 min real-model smoke.
+Landed in `6bb6225`. `cbs run-agent -p agent-prompts.yaml -b
+agent-backends.yaml -j 2 --db results.db --judges nemotron gemma glm` runs
+the (prompt × backend) matrix, persists agent runs + tool calls + auto-grade
++ judge scores, prints a summary table. `cbs judge <run_id>` re-runs the
+panel from the stored audit trail (`agent_run_to_state` rebuilds a `RunState`
+without `messages`). `--no-judges` skips the panel; `--max-steps` overrides;
+`-j N` parallelizes. `cbs validate` reports agent cases and warns on missing
+fixtures (honored by `--strict`). See the design decisions above; no open work.
 
 ---
 
-## Step 8 — Dashboard route for the audit trail
+## Step 8 — Dashboard route for the audit trail — DONE
 
-**Goal:** a new page in the existing FastAPI + HTMX dashboard that shows
-the agentic audit trail in human-readable form.
+Landed in `bdee672`. Routes:
+- `GET /runs/{id}` — links to the agent view when `agent_run_count` > 0.
+- `GET /runs/{id}/agent` — list of agent_runs (prompt, backend, steps,
+  completed, auto-grade, judge count, final-answer preview) + leaderboard link.
+- `GET /runs/{id}/agent/{agent_run_id}` — full detail: meta, prompt text,
+  auto-grade table, judge panel matrix (judges × axes + medians), evidence
+  `<details>`, tool-call audit trail (step/tool/args/status/duration/result
+  preview), final answer `<pre>`.
+- `GET /runs/{id}/compare?prompt=X` — extended with a judge-medians section.
 
-**What to build (in `src/chatbot_sandbox/dashboard.py`):**
-
-1. **Route `GET /runs/<id>`** — currently shows the single-turn summary.
-   Add a section: "if this run has agent_runs rows, show a link to the
-   agent view per (prompt, backend)".
-
-2. **Route `GET /runs/<id>/agent`** — for one run, list all agent_runs
-   with prompt id, backend, total_steps, completed_normally, final_answer
-   preview. Click a row to drill in.
-
-3. **Route `GET /runs/<run_id>/agent/<agent_run_id>`** — full detail page:
-   - Header: prompt text, backend, total_steps, completed_normally
-   - Auto-grade report (the 7 checks with pass/fail)
-   - LLM-judge panel: 5 axes × 3 judges, with evidence strings
-   - Audit trail: every tool call in step order, with:
-     - tool name, args, duration, ok/err
-     - output preview (truncated)
-     - error message if failed
-   - Final answer in a `<pre>` block
-
-4. **Route `GET /runs/<id>/compare?prompt=X`** — already exists for
-   single-turn. Extend to show the judge-panel medians side-by-side
-   across all 5 models for the same prompt.
-
-5. **Styling:** the dashboard uses HTMX + plain HTML. Match the existing
-   styles; no new CSS framework.
-
-**Test plan:**
-
-- `tests/test_dashboard.py` — exercise the new routes with a synthetic
-  agent_run + tool_calls + judge_scores set in the test DB.
-- Verify 404s for non-existent run_ids, agent_run_ids.
-- Verify the audit trail renders in the right order.
-
-**Estimated scope:** ~300 lines of new dashboard + 200 lines of test.
+404s verified for non-existent run/agent ids; audit trail renders in step
+order. Covered by `tests/test_dashboard.py` (+10 tests).
 
 ---
 
-## Step 9 — Fixtures for the remaining 7 cases
+## Step 9 — Fixtures + calibration for the remaining 7 cases — OPEN
 
 **Goal:** 7 more fixtures, mirroring `tests/fixtures/repo-bug-1/`. Each is
 a real, runnable Python project with one or two pytest tests, a pyproject,
-and a README. The bug is hand-written and has a known good fix.
+and a README. The bug is hand-written and has a known good fix. The YAML
+prompt entries already exist in `agent-prompts.yaml` (transcribed verbatim
+from the smoke CASES) — Step 9 is creating the *fixtures* and *calibrating*
+the validators against real models, not authoring the prompt text.
 
 **Important calibration note (from the conversation):** "tests should be
 harder/more difficult in later versions." This applies to the LLM-judge
@@ -202,12 +180,11 @@ across the board. Future cases need:
    fixture; the 6th is also a no-fixture case in the original design, but
    I recommend giving it a tiny fixture too — even just an empty repo —
    so the agent can `list_dir` and feel oriented.)
-2. Add a `validators:` block to the case's prompts.yaml entry.
-3. Add a smoke function `smoke_case_X(backend, judges)` to
-   `e2e-test/agent-smoke.py` (or split into one file per case if it
-   gets long).
-4. Run the case against all 5 models, eyeball the audit trails, calibrate
-   the validators until the case discriminates (not everyone gets 5/5).
+2. The `validators:` block already lives in `agent-prompts.yaml`; tune
+   the needles (e.g. `final_text_contains_all`) during calibration.
+3. Run the case via `cbs run-agent` against all 5 models, eyeball the
+   audit trail in the dashboard (`/runs/{id}/agent/{agent_run_id}`),
+   calibrate validators until the case discriminates (not everyone 5/5).
 
 **Calibration loop:**
 
@@ -218,52 +195,42 @@ will be tempted to edit). If everyone fails 0/5, the case is too hard
 or the prompt is unclear. Aim for: a spread of 3-5 across the
 auto-graders and judge scores between the 5 models.
 
-**Estimated scope:** ~1 hour per case (fixture + prompt + smoke +
-calibration). ~7 hours total for all 7.
+**Estimated scope:** ~1 hour per case (fixture + calibration). ~7 hours total.
 
 ---
 
-## Step 10 — End-to-end leaderboard
+## Step 10 — End-to-end leaderboard — DONE (code); real run is OPEN
 
-**Goal:** one command runs the full 8-case × 5-model benchmark, and the
-output is a leaderboard table (1 row per model, columns per axis).
+Landed in `bdee672`. The leaderboard plumbing is complete and tested
+network-free (`tests/test_cli_leaderboard.py`):
 
-**What to build:**
+- `cbs leaderboard <run_id> --db results.db` — Rich table, 1 row per
+  backend, columns: Cases, Auto pass (n/total), then the 5 judge-axis
+  medians. Reads `db.agent_leaderboard(run_id)`.
+- `cbs export-agent <run_id> -o exports/agent-run-{run_id}.md` — same
+  data as Markdown.
+- `GET /runs/{id}/leaderboard` — dashboard view.
 
-1. **`cbs leaderboard <run_id> --db results.db`** — read the persisted
-   agent_runs + judge_scores, group by backend, compute per-axis medians
-   and auto-grade pass rates. Print as a Rich table.
+**Still open (your credits + judgment):** run the full benchmark once:
 
-2. **The benchmark run command:**
+```bash
+cbs run-agent \
+  -p e2e-test/agent-prompts.yaml \
+  -b e2e-test/agent-backends.yaml \
+  -j 2 \
+  --db e2e-test/agent-results.db \
+  --notes "q3 2026 agentic comparison"
+```
 
-   ```bash
-   cbs run-agent \
-     -p e2e-test/agent-prompts.yaml \
-     -b e2e-test/agent-backends.yaml \
-     -j 2 \
-     --db e2e-test/agent-results.db \
-     --notes "q3 2026 agentic comparison"
-   ```
+- 8 cases × 5 models = 40 agent runs
+- 40 × ~3 judges × 1 call each = 120 judge calls
+- Estimated cost: $20-50 in Ollama Pro credits; estimated wall time
+  30-60 minutes with -j 2.
+- Then `cbs leaderboard <run_id>` / `cbs export-agent <run_id>` /
+  `/runs/{id}/leaderboard` to read it.
 
-   - 8 cases × 5 models = 40 agent runs
-   - 40 × ~3 judges × 1 call each = 120 judge calls
-   - Estimated cost: $20-50 in Ollama Pro credits; estimated wall time
-     30-60 minutes with -j 2.
-
-3. **Export:** extend `cbs export` (or add `cbs export-agent`) to dump
-   the leaderboard to a Markdown file, alongside the per-run dump.
-
-4. **`cbs dashboard`** — add a "Leaderboard" view at the top of the
-   dashboard when a run is selected.
-
-**Test plan:**
-
-- `tests/test_cli_leaderboard.py` — synthetic agent_runs + judge_scores
-  rows, verify the table renders correctly.
-- End-to-end: run the full benchmark once, eyeball the leaderboard,
-  save the report.
-
-**Estimated scope:** ~150 lines of new code + ~30 min real-model run.
+This run only becomes meaningful once Step 9 has calibrated the 7 new
+cases — running it now would just re-confirm case 1.
 
 ---
 
@@ -271,13 +238,13 @@ output is a leaderboard table (1 row per model, columns per axis).
 
 | Step | Test additions | Real-model credits | Wall time |
 |---|---|---|---|
-| 7 | ~400 lines CLI tests | ~$3 (smoke) | 30 min |
-| 8 | ~200 lines dashboard tests | $0 | 0 (no model) |
+| 7 | done (`test_cli_agent.py`) | ~$3 (smoke) | done |
+| 8 | done (`test_dashboard.py` +10) | $0 | done |
 | 9 | ~$1 per case × 7 = ~$7 | $7 | 7 hours of human calibration |
-| 10 | ~150 lines + 1 full run | $25-50 | 1 hour |
+| 10 | done (`test_cli_leaderboard.py`) | $25-50 (the one full run) | ~1 hour |
 
-**Total estimated: $35-60 in Ollama Pro credits, 8-10 hours of human
-work over multiple sessions.**
+**Remaining: ~$32-57 in Ollama Pro credits, ~7-8 hours of human work
+over multiple sessions — all in Step 9 + the single benchmark run.**
 
 ---
 
@@ -332,31 +299,30 @@ work over multiple sessions.**
     100K+ tokens. Already capped at one row per run; the per-tool-call
     rows in `tool_calls` carry the structured data.
 
+11. **Rich truncates long headers in tests.** CliRunner's ~80-col width
+    truncates "planning" → "planni…". In `tests/test_cli_agent.py` /
+    `tests/test_cli_leaderboard.py`, assert on values/titles, not column
+    headers.
+
 ---
 
 ## If you want to skip ahead
 
-If time is limited, the order I'd prioritize is:
+Only Step 9 remains, so the prioritization is now within it. In order of
+signal-per-effort:
 
-1. **Step 9 (case 4 — constraint retention)** — this is the highest-
-   signal case in the matrix. The trap is concrete, the discriminator
-   is clean, and current top models will likely fail it.
-2. **Step 9 (case 6 — external action boundary)** — safety case,
-   highest stakes for real-world agent deployment, easy to set up
-   (no fixture, just comms tools).
-3. **Step 9 (case 5 — failure recovery)** — diagnostic value, exposes
-   models that just keep editing code when env is broken.
-4. **Step 9 (case 8 — regression guard)** — the one that separates
-   "patch generator" from "agent"; catches models that don't search
-   for callers.
-5. **Step 7 (CLI)** — once you have 3+ cases, the CLI becomes the
-   bottleneck. Don't write 8 cases and then the CLI; interleave.
-6. **Step 8 (dashboard)** — quality-of-life, not essential for the
-   benchmark itself.
-7. **Step 9 (cases 2, 3, 7)** — case 2 is good for the "code review"
-   angle, case 3 for "ambiguity handling", case 7 for "multi-layer
-   planning". All useful, none load-bearing.
-8. **Step 10 (leaderboard)** — only valuable once you have most cases.
+1. **Case 4 — constraint retention** — highest-signal case. Concrete trap,
+   clean discriminator; current top models will likely fail it.
+2. **Case 6 — external action boundary** — safety case, highest stakes for
+   real-world agent deployment, easy to set up (no fixture, just comms tools).
+3. **Case 5 — failure recovery** — diagnostic value, exposes models that
+   just keep editing code when env is broken.
+4. **Case 8 — regression guard** — separates "patch generator" from "agent";
+   catches models that don't search for callers.
+5. **Cases 2, 3, 7** — case 2 (code-review angle), case 3 (ambiguity
+   handling), case 7 (multi-layer planning). All useful, none load-bearing.
+6. **The full benchmark run** — only after the cases above discriminate;
+   otherwise it just re-confirms case 1.
 
 ---
 
@@ -368,25 +334,29 @@ chatbot-sandbox/
 ├── HANDOVER_AGENTIC.md                  this file
 ├── docs/agentic-benchmark-design.md     the design doc (authoritative)
 ├── e2e-test/
-│   ├── agent-smoke.py                   1-case smoke + judges + DB
+│   ├── agent-smoke.py                   thin wrapper → `cbs run-agent`
 │   ├── agent-smoke*.log                 ephemeral (gitignored)
 │   ├── agent-results.db                 ephemeral (gitignored)
-│   ├── agent-prompts.yaml               (to add in step 7)
-│   ├── agent-backends.yaml              (to add in step 7)
+│   ├── agent-prompts.yaml              8 cases (DONE, step 7)
+│   ├── agent-backends.yaml             5-model pool (DONE, step 7)
 │   ├── backends.yaml, prompts.yaml, …  existing single-turn
 │   ├── report.md, report-q3-2026.md    existing single-turn exports
 │   └── schemas.json                     existing
 ├── src/chatbot_sandbox/
 │   ├── agent/                           all the agent code (DONE)
-│   ├── backends/                        + chat() for ollama (DONE)
-│   ├── cli.py                           to extend in step 7
-│   ├── compare.py                       to extend in step 8
-│   ├── dashboard.py                     to extend in step 8
-│   ├── db.py                            + agent methods (DONE)
+│   ├── backends/                        + chat() for ollama + command (DONE)
+│   ├── cli.py                           run-agent/judge/leaderboard/export-agent (DONE)
+│   ├── compare.py                       (single-turn)
+│   ├── dashboard.py                     + agent + leaderboard routes (DONE)
+│   ├── export.py                        + export_agent_leaderboard (DONE)
+│   ├── db.py                            + agent methods + agent_leaderboard (DONE)
 │   ├── migrations/0004_agent_runs.sql   (DONE)
 │   └── …
 ├── tests/
 │   ├── agent_*.py                       all the agent tests (DONE)
+│   ├── test_cli_agent.py               run-agent/judge/validate (DONE)
+│   ├── test_cli_leaderboard.py         leaderboard/export/dashboard (DONE)
+│   ├── test_dashboard.py               + agent-view tests (DONE)
 │   ├── fixtures/
 │   │   ├── repo-bug-1/                  (DONE — case 1)
 │   │   ├── repo-config-pattern/         (step 9, case 2)
@@ -408,15 +378,16 @@ chatbot-sandbox/
 uv run python e2e-test/agent-smoke.py
 uv run python e2e-test/agent-smoke.py --no-judges  # ~$0.05, no judge panel
 
-# After step 7
+# Full benchmark (after step 9 calibration)
 cbs run-agent -p e2e-test/agent-prompts.yaml -b e2e-test/agent-backends.yaml \
     -j 2 --db e2e-test/agent-results.db --notes "q3 2026"
 cbs judge 1 -p e2e-test/agent-prompts.yaml -b e2e-test/agent-backends.yaml \
     --db e2e-test/agent-results.db
 cbs leaderboard 1 --db e2e-test/agent-results.db
+cbs export-agent 1 --db e2e-test/agent-results.db
 
-# After step 8
-cbs dashboard  # http://127.0.0.1:8000/runs/1/agent
+# Dashboard (after a run)
+cbs dashboard  # http://127.0.0.1:8000/runs/1/agent  ->  /runs/1/leaderboard
 
 # Tests
 uv run pytest -q
@@ -426,7 +397,9 @@ uv run mypy src
 
 ---
 
-Last updated: 2026-06-09. Agent commit: `06d0162`. Smoke tested on
-`minimax-m3:cloud`, judged by `nemotron-3-ultra:cloud`, `gemma4:31b-cloud`,
-`glm-5.1:cloud`. End-to-end working, persisted to SQLite, ready to
-scale to 8 cases × 5 models.
+Last updated: 2026-06-18. Steps 7–8 + 10 on `main` (`6bb6225`, `bdee672`).
+Smoke tested on `minimax-m3:cloud`, judged by `nemotron-3-ultra:cloud`,
+`gemma4:31b-cloud`, `glm-5.1:cloud`. End-to-end working, persisted to
+SQLite, leaderboard + audit-trail surfaces live. **Only Step 9 (calibrate
+the 7 remaining cases against real models) + the one-shot full benchmark
+run remain — both need Ollama credits + human judgment.**

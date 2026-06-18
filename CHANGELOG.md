@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - unreleased
 
 ### Added
+- **Agentic benchmark toolchain (design doc `docs/agentic-benchmark-design.md`,
+  Steps 7–8 + 10):**
+  - `cbs run-agent` drives the agent loop over a (prompt × backend) matrix,
+    persists agent runs + tool calls + auto-grade + judge scores, with `-j N`
+    parallelism, `--judges`, `--no-judges`, and `--max-steps` overrides.
+  - `cbs judge <run_id>` re-runs the LLM-judge panel from the stored audit
+    trail (`agent_run_to_state` rebuilds a `RunState` from DB rows).
+  - `cbs leaderboard <run_id>` prints a per-backend Rich table (auto-grade
+    pass count + per-axis judge medians); `cbs export-agent <run_id>` writes
+    the same data as Markdown. Aggregation is centralized in
+    `Database.agent_leaderboard()`, shared by CLI/export/dashboard.
+  - `cbs validate` reports `agent:` prompt blocks and warns on missing
+    fixtures (honored by `--strict`).
+  - Dashboard routes: `/runs/{id}/agent` (list),
+    `/runs/{id}/agent/{agent_run_id}` (full audit-trail detail with
+    auto-grade table, judge panel matrix, tool-call trail, final answer),
+    and `/runs/{id}/leaderboard` (per-backend table). The compare and run
+    detail views now surface agent/judge data when present.
+  - `AgentConfig.fixture` field; `CommandBackend.chat()` for network-free
+    agent and judge testing via `type: command` backends; `e2e-test/`
+    `agent-prompts.yaml` (8 cases) and `agent-backends.yaml` (5-model pool).
 - `cbs schema` subcommand exporting JSON Schema for the prompt and backend
   config models; usable for editor autocompletion and config validation.
   The `BackendConfig.type` field now exposes an enum of allowed values in
