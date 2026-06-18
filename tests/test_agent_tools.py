@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -273,7 +274,10 @@ def test_run_shell_echo(sandbox: Sandbox, shell_registry: ToolRegistry) -> None:
 
 
 def test_run_shell_cwd_is_sandbox(sandbox: Sandbox, shell_registry: ToolRegistry) -> None:
-    res = shell_registry.get("run_shell").execute({"command": "cd"}, sandbox)
+    # `cd` prints the cwd on Windows; `pwd` does on POSIX.
+    res = shell_registry.get("run_shell").execute(
+        {"command": "cd" if sys.platform == "win32" else "pwd"}, sandbox
+    )
     assert res.ok
     assert res.output["stdout"].strip() == str(sandbox.workdir)
 
@@ -286,8 +290,9 @@ def test_run_shell_nonzero_exit(sandbox: Sandbox, shell_registry: ToolRegistry) 
 
 
 def test_run_shell_timeout(sandbox: Sandbox, shell_registry: ToolRegistry) -> None:
+    # A portable long runner: sleeps 5s, killed at the 1s timeout on every platform.
     res = shell_registry.get("run_shell").execute(
-        {"command": "ping -n 5 127.0.0.1 > nul", "timeout_s": 1}, sandbox
+        {"command": f'"{sys.executable}" -c "import time; time.sleep(5)"', "timeout_s": 1}, sandbox
     )
     assert not res.ok
     assert "timed out" in (res.error or "")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from chatbot_sandbox.agent import RunState, Sandbox, ToolCallRecord, grade_agent
@@ -237,7 +238,9 @@ def test_test_passes_runs_command_in_sandbox(tmp_path: Path) -> None:
     (fixture / "ok.txt").write_text("ok", encoding="utf-8")
     with Sandbox.from_fixture(fixture) as sb:
         s = _state(_tc("read_file", {"path": "ok.txt"}))
-        r = grade_agent(s, {"test_passes": ["cmd", "/c", "type", "ok.txt"]}, sandbox=sb)
+        r = grade_agent(
+            s, {"test_passes": [sys.executable, "-c", "print(open('ok.txt').read())"]}, sandbox=sb
+        )
         assert r["test_passes"]["passed"] is True
 
 
@@ -246,8 +249,8 @@ def test_test_passes_fails_on_nonzero_exit(tmp_path: Path) -> None:
     fixture.mkdir()
     with Sandbox.from_fixture(fixture) as sb:
         s = _state()
-        # `cmd /c exit 1` returns non-zero on every platform that has cmd.
-        r = grade_agent(s, {"test_passes": ["cmd", "/c", "exit", "1"]}, sandbox=sb)
+        # A portable nonzero-exit command: python -c exits 1 on every platform.
+        r = grade_agent(s, {"test_passes": [sys.executable, "-c", "import sys; sys.exit(1)"]}, sandbox=sb)
         assert r["test_passes"]["passed"] is False
         assert "exit 1" in r["test_passes"]["detail"]
 
