@@ -34,12 +34,17 @@ class AgentConfig(BaseModel):
     When `Prompt.agent` is set, the agent driver loop is used instead of
     a single chat call. A prompt without `agent:` falls back to the
     existing single-turn path; this is fully backwards-compatible.
+
+    `fixture` is an optional path (relative to the working directory the
+    CLI is run from) to a directory copied into a fresh per-run sandbox.
+    When None the agent runs against an empty sandbox.
     """
 
     tools: list[str]
     max_steps: int = 15
     step_timeout_s: int = 30
     workdir: str | None = None
+    fixture: str | None = None
     commit_required: bool = False
     use_native_tool_calling: bool | None = None
 
@@ -91,12 +96,17 @@ class Prompt(BaseModel):
     @classmethod
     def _validators_known(cls, v: dict[str, Any]) -> dict[str, Any]:
         # Imported lazily to keep config.py free of runtime dependencies.
+        # Single-turn prompts use `graders.KNOWN_CHECKS`; agent prompts use
+        # `agent.graders.KNOWN_AGENT_CHECKS`. Accept the union so a prompts
+        # file may mix both kinds.
+        from .agent.graders import KNOWN_AGENT_CHECKS
         from .graders import KNOWN_CHECKS
 
-        unknown = [k for k in v if k not in KNOWN_CHECKS]
+        known = KNOWN_CHECKS | KNOWN_AGENT_CHECKS
+        unknown = [k for k in v if k not in known]
         if unknown:
             raise ValueError(
-                f"unknown validator(s) {unknown}; known: {sorted(KNOWN_CHECKS)}"
+                f"unknown validator(s) {unknown}; known: {sorted(known)}"
             )
         return v
 

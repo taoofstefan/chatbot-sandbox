@@ -69,6 +69,21 @@ class Sandbox:
             workdir = (tmp / "repo").resolve()
         return cls(workdir=workdir, _owns_tempdir=tmp)
 
+    @classmethod
+    def empty(cls) -> Sandbox:
+        """Create a sandbox with an empty working directory (no fixture).
+
+        For agent cases that have no fixture tree to copy (e.g. a pure
+        communication-tools case). The agent still sees a writable root it
+        can orient in.
+        """
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp(prefix="cbs-sandbox-"))
+        workdir = (tmp / "repo").resolve()
+        workdir.mkdir(exist_ok=True)
+        return cls(workdir=workdir, _owns_tempdir=tmp)
+
     def resolve(self, path: str | Path) -> Path:
         """Resolve a tool-supplied path against the sandbox root.
 

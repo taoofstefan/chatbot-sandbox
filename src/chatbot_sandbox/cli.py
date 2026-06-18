@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -10,9 +12,26 @@ import typer
 import yaml
 from pydantic import ValidationError
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
 from . import __version__
+from .agent import (
+    ChatFn,
+    Sandbox,
+    SandboxError,
+    ToolRegistry,
+    agent_run_to_state,
+    grade_run,
+    judge_panel,
+    run_agent,
+)
 from .backends import build_backend, known_types
 from .backends.base import Backend, BackendError
 from .compare import diff_outputs, side_by_side, summary_table
@@ -282,6 +301,459 @@ def run(
         f"\n[bold green]done[/bold green]: {ok} ok, {err} failed "
         f"({len(prompts)} prompts x {len(backends)} backends). run_id={run_id}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Agent benchmark: `cbs run-agent` and `cbs judge`
+# ---------------------------------------------------------------------------
+
+_JUDGE_AXES = ("planning", "recovery", "honesty", "minimality", "safety")
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    if n % 2 == 0:
+        return (s[n // 2 - 1] + s[n // 2]) / 2
+    return float(s[n // 2])
+
+
+def _agent_summary(db: Database, run_id: int, *, with_judges: bool) -> Table:
+    """Build a per-backend summary table for an agent run.
+
+    One row per agent backend: case count, auto-grade pass rate, and (when
+    judges ran) the median judge score per axis. Auto-grade pass comes from
+    the ``results.validation_json`` rows; judge medians come from
+    ``judge_scores`` grouped by agent_run → backend_name.
+    """
+    agent_runs = db.list_agent_runs_for_run(run_id)
+    results = db.get_results(run_id)
+
+    auto_by_backend: dict[str, list[bool]] = {}
+    for r in results:
+        vj = r["validation_json"]
+        passed = False
+        if vj:
+            try:
+                rep = json.loads(vj)
+                passed = bool(rep) and all(bool(c.get("passed")) for c in rep.values())
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                passed = False
+        auto_by_backend.setdefault(r["backend_name"], []).append(passed)
+
+    judge_by_backend: dict[str, dict[str, list[int]]] = {}
+    for ar in agent_runs:
+        bname = ar["backend_name"]
+        bucket = judge_by_backend.setdefault(bname, {a: [] for a in _JUDGE_AXES})
+        for sc in db.get_judge_scores_for_agent_run(ar["id"]):
+            rubric = sc["rubric"]
+            if rubric in bucket:
+                bucket[rubric].append(int(sc["score"]))
+
+    backend_names = sorted(
+        set(auto_by_backend) | set(judge_by_backend) | {ar["backend_name"] for ar in agent_runs}
+    )
+    table = Table(title=f"Agent run {run_id} summary")
+    table.add_column("Backend")
+    table.add_column("Cases", justify="right")
+    table.add_column("Auto pass", justify="right")
+    if with_judges:
+        for axis in _JUDGE_AXES:
+            table.add_column(axis, justify="right")
+    for bname in backend_names:
+        autos = auto_by_backend.get(bname, [])
+        cases = len(autos) or sum(1 for ar in agent_runs if ar["backend_name"] == bname)
+        auto_str = f"{sum(1 for p in autos if p)}/{len(autos)}" if autos else "-"
+        row = [bname, str(cases), auto_str]
+        if with_judges:
+            jb = judge_by_backend.get(bname, {})
+            for axis in _JUDGE_AXES:
+                vals = jb.get(axis, [])
+                row.append(f"{_median([float(x) for x in vals]):.1f}" if vals else "-")
+        table.add_row(*row)
+    return table
+
+
+def _resolve_fixture(prompt: Prompt) -> Sandbox:
+    """Build the per-run sandbox from the prompt's agent fixture (or empty)."""
+    fixture = prompt.agent.fixture if prompt.agent else None
+    if fixture:
+        return Sandbox.from_fixture(Path(fixture).resolve())
+    return Sandbox.empty()
+
+
+def _run_agent_task(
+    db: Database,
+    run_id: int,
+    prompt: Prompt,
+    backend: Backend,
+    max_steps: int,
+    judge_backends: list[tuple[str, Backend]],
+    do_judges: bool,
+) -> dict[str, object]:
+    """Run one (prompt, backend) agent case, grade it, persist, and judge.
+
+    Never raises: a failure (missing fixture, task exception) is recorded as
+    an error result so a long batch run isn't killed by one bad case. The
+    sandbox is cleaned up in every path.
+    """
+    try:
+        sb = _resolve_fixture(prompt)
+    except SandboxError as e:
+        db.insert_result(
+            {
+                "run_id": run_id,
+                "prompt_id": prompt.id,
+                "backend_name": backend.name,
+                "model": backend.model,
+                "output": "",
+                "error": f"fixture: {e}",
+                "latency_ms": 0,
+                "tags": prompt.tags or ["agentic"],
+                "notes": prompt.notes,
+            }
+        )
+        return {"prompt_id": prompt.id, "backend": backend.name, "error": str(e)}
+
+    try:
+        assert prompt.agent is not None  # filtered upstream
+        registry = ToolRegistry.from_names(prompt.agent.tools)
+        t0 = time.perf_counter()
+        state = run_agent(
+            user_prompt=prompt.text,
+            sandbox=sb,
+            registry=registry,
+            chat=backend.chat,
+            max_steps=max_steps,
+            use_native_tool_calling=prompt.agent.use_native_tool_calling,
+        )
+        wall_ms = int((time.perf_counter() - t0) * 1000)
+
+        result_id = db.insert_result(
+            {
+                "run_id": run_id,
+                "prompt_id": prompt.id,
+                "backend_name": backend.name,
+                "model": backend.model,
+                "output": state.final_answer or "",
+                "error": state.error,
+                "latency_ms": wall_ms,
+                "tags": prompt.tags or ["agentic"],
+                "notes": prompt.notes,
+            }
+        )
+        agent_run_id = db.create_agent_run(
+            run_id=run_id,
+            prompt_id=prompt.id,
+            backend_name=backend.name,
+        )
+        for tc in state.tool_calls:
+            db.insert_tool_call(
+                agent_run_id=agent_run_id,
+                step_index=tc.step_index,
+                tool_name=tc.tool_name,
+                arguments=dict(tc.arguments),
+                result=dict(tc.output),
+                ok=tc.ok,
+                error=tc.error,
+                duration_ms=tc.duration_ms,
+            )
+        db.finish_agent_run(
+            agent_run_id,
+            final_answer=state.final_answer,
+            total_steps=state.total_steps,
+            completed_normally=state.completed_normally,
+            final_messages_json=json.dumps(state.messages, default=str),
+        )
+
+        grade_report = grade_run(state, prompt.validators, sandbox=sb)
+        db.set_validation(result_id, json.dumps(grade_report, default=str))
+
+        if do_judges and judge_backends:
+            judges: list[tuple[str, ChatFn]] = [
+                (name, jb.chat) for name, jb in judge_backends if name != backend.name
+            ]
+            if judges:
+                panel = judge_panel(state=state, judges=judges, user_prompt=prompt.text)
+                for r in panel.reports:
+                    evidence = r.evidence()
+                    for axis, score in r.scores().items():
+                        db.insert_judge_score(
+                            agent_run_id=agent_run_id,
+                            rubric=axis,
+                            judge_backend=r.model or "unknown",
+                            judge_model=r.model,
+                            score=score,
+                            evidence=evidence.get(axis, ""),
+                            raw_response=r.raw,
+                            latency_ms=r.latency_ms,
+                        )
+        return {
+            "prompt_id": prompt.id,
+            "backend": backend.name,
+            "error": state.error,
+        }
+    except Exception as e:  # keep the batch alive; record and move on
+        db.insert_result(
+            {
+                "run_id": run_id,
+                "prompt_id": prompt.id,
+                "backend_name": backend.name,
+                "model": backend.model,
+                "output": "",
+                "error": f"task error: {type(e).__name__}: {e}",
+                "latency_ms": 0,
+                "tags": prompt.tags or ["agentic"],
+                "notes": prompt.notes,
+            }
+        )
+        return {"prompt_id": prompt.id, "backend": backend.name, "error": str(e)}
+    finally:
+        sb.cleanup()
+
+
+@app.command("run-agent")
+def run_agent_cmd(
+    prompts_file: Path = typer.Option(..., "--prompts", "-p", help="YAML prompt set."),
+    backends_file: Path = typer.Option(..., "--backends", "-b", help="YAML backend config."),
+    only_backends: list[str] | None = typer.Option(
+        None, "--backend", help="Restrict to these agent backend names (repeatable)."
+    ),
+    only_prompts: list[str] | None = typer.Option(
+        None, "--prompt", help="Restrict to these prompt ids (repeatable)."
+    ),
+    judges: list[str] | None = typer.Option(
+        None, "--judges", help="Judge backend names from -b (repeatable). Default: no panel."
+    ),
+    no_judges: bool = typer.Option(False, "--no-judges", help="Skip the judge panel."),
+    max_steps: int = typer.Option(
+        25, "--max-steps", help="Override each prompt's agent.max_steps."
+    ),
+    parallel: int = typer.Option(1, "--parallel", "-j", help="Concurrent agent runs."),
+    db_path: Path | None = typer.Option(None, "--db", help="SQLite path."),
+    notes: str = typer.Option("", "--notes", help="Free-form note attached to the run."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show matrix, do not execute."),
+    api_key: list[str] | None = typer.Option(
+        None, "--api-key", help="Override an API key: 'backend=value' (repeatable)."
+    ),
+    env_file: Path | None = typer.Option(
+        None, "--env-file", help="Load KEY=VALUE pairs from this file before resolving keys."
+    ),
+) -> None:
+    """Run agent cases (prompts with an `agent:` block) across backends."""
+    try:
+        overrides = parse_key_override(api_key)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
+    resolver = build_resolver(overrides=overrides, env_file=env_file)
+
+    pset = PromptSet.from_yaml(prompts_file)
+    bset = BackendSet.from_yaml(backends_file)
+    agent_cfgs = bset.find(only_backends)
+    judge_cfgs = bset.find(judges) if judges else []
+
+    prompts = [p for p in pset.prompts if p.agent is not None]
+    if only_prompts:
+        ids = set(only_prompts)
+        missing = ids - {p.id for p in pset.prompts}
+        if missing:
+            raise typer.BadParameter(f"unknown prompt id(s): {sorted(missing)}")
+        prompts = [p for p in prompts if p.id in ids]
+    if not prompts:
+        console.print("[yellow]no agent prompts (none have an `agent:` block)[/yellow]")
+        return
+    if max_steps < 1:
+        raise typer.BadParameter("--max-steps must be >= 1")
+
+    do_judges = bool(judge_cfgs) and not no_judges
+
+    tools_by_id = {p.id: ",".join(p.agent.tools) for p in prompts if p.agent is not None}
+    matrix = [(p.id, b.name) for p in prompts for b in agent_cfgs]
+    table = Table(title="Planned agent matrix")
+    table.add_column("#", justify="right")
+    table.add_column("Prompt")
+    table.add_column("Backend")
+    table.add_column("Tools")
+    table.add_column("MaxSteps", justify="right")
+    table.add_column("Judges", justify="right")
+    for i, (pid, bname) in enumerate(matrix, 1):
+        table.add_row(
+            str(i), pid, bname, tools_by_id.get(pid, ""), str(max_steps),
+            str(len(judge_cfgs) if do_judges else 0),
+        )
+    console.print(table)
+    _warn_literal_keys(list(agent_cfgs) + list(judge_cfgs))
+
+    if dry_run:
+        console.print("[yellow]dry-run: not executing[/yellow]")
+        return
+
+    db = _db(db_path)
+    run_id = db.create_run(
+        pset.name,
+        [b.name for b in agent_cfgs],
+        notes=notes,
+        prompts=[{"id": p.id, "text": p.text} for p in prompts],
+        backends=[redact_backend_config(b) for b in agent_cfgs],
+        meta=build_run_meta("run-agent"),
+    )
+    console.print(f"[dim]run_id={run_id} db={db.path}[/dim]")
+
+    agent_backends: list[Backend] = []
+    for cfg in agent_cfgs:
+        try:
+            agent_backends.append(build_backend(cfg, key_resolver=resolver))
+        except BackendError as e:
+            console.print(f"[red]skipping {cfg.name}: {e}[/red]")
+
+    judge_backends: list[tuple[str, Backend]] = []
+    if do_judges:
+        for cfg in judge_cfgs:
+            try:
+                judge_backends.append((cfg.name, build_backend(cfg, key_resolver=resolver)))
+            except BackendError as e:
+                console.print(f"[red]skipping judge {cfg.name}: {e}[/red]")
+
+    tasks = [(p, b) for p in prompts for b in agent_backends]
+    summaries: list[dict[str, object]] = []
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        transient=True,
+    )
+    with progress:
+        overall = progress.add_task("running agents", total=len(tasks))
+        if parallel <= 1:
+            for p, b in tasks:
+                summaries.append(
+                    _run_agent_task(db, run_id, p, b, max_steps, judge_backends, do_judges)
+                )
+                progress.update(overall, advance=1)
+        else:
+            with ThreadPoolExecutor(max_workers=parallel) as ex:
+                futures = {
+                    ex.submit(_run_agent_task, db, run_id, p, b, max_steps, judge_backends, do_judges): (p, b)
+                    for p, b in tasks
+                }
+                for fut in as_completed(futures):
+                    summaries.append(fut.result())
+                    progress.update(overall, advance=1)
+    db.finish_run(run_id)
+
+    console.print(_agent_summary(db, run_id, with_judges=do_judges))
+    ok = sum(1 for s in summaries if not s["error"])
+    err = len(summaries) - ok
+    console.print(
+        f"\n[bold green]done[/bold green]: {ok} ok, {err} failed "
+        f"({len(prompts)} prompts x {len(agent_backends)} backends). run_id={run_id}"
+    )
+
+
+@app.command("judge")
+def judge_cmd(
+    run_id: int = typer.Argument(..., help="Run id to re-judge."),
+    backends_file: Path = typer.Option(..., "--backends", "-b", help="YAML backend config (source of judges)."),
+    prompts_file: Path | None = typer.Option(
+        None, "--prompts", "-p", help="Optional prompts file (fallback for prompt text)."
+    ),
+    judges: list[str] | None = typer.Option(
+        None, "--judges", help="Judge backend names from -b (repeatable)."
+    ),
+    db_path: Path | None = typer.Option(None, "--db"),
+    api_key: list[str] | None = typer.Option(None, "--api-key"),
+    env_file: Path | None = typer.Option(None, "--env-file"),
+) -> None:
+    """Re-run the judge panel against a run's stored audit trail.
+
+    Reads the persisted `agent_runs` + `tool_calls`, reconstructs a RunState,
+    and re-runs the panel with the chosen judge backends (excluding, per
+    case, the backend that was the agent under test). Existing judge scores
+    for each agent run are cleared first so re-judging is idempotent.
+    """
+    try:
+        overrides = parse_key_override(api_key)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
+    resolver = build_resolver(overrides=overrides, env_file=env_file)
+
+    db = _db(db_path)
+    if db.get_run(run_id) is None:
+        raise typer.BadParameter(f"no such run: {run_id}")
+    agent_runs = db.list_agent_runs_for_run(run_id)
+    if not agent_runs:
+        raise typer.BadParameter(f"run {run_id} has no agent runs")
+
+    bset = BackendSet.from_yaml(backends_file)
+    judge_cfgs = bset.find(judges)
+    judge_backends: list[tuple[str, Backend]] = []
+    for cfg in judge_cfgs:
+        try:
+            judge_backends.append((cfg.name, build_backend(cfg, key_resolver=resolver)))
+        except BackendError as e:
+            console.print(f"[red]skipping judge {cfg.name}: {e}[/red]")
+    if not judge_backends:
+        raise typer.BadParameter("no judge backends could be built")
+
+    # Prompt text: prefer the run's stored prompts_json snapshot; fall back to -p.
+    prompt_text: dict[str, str] = {}
+    run_row = db.get_run(run_id)
+    if run_row is not None and run_row["prompts_json"]:
+        try:
+            for p in json.loads(run_row["prompts_json"]):
+                prompt_text[p["id"]] = p["text"]
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            console.print(f"[yellow]warn[/yellow] malformed prompts_json: {e}")
+    if prompts_file is not None:
+        pset = PromptSet.from_yaml(prompts_file)
+        for p in pset.prompts:
+            prompt_text.setdefault(p.id, p.text)
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        transient=True,
+    )
+    with progress:
+        overall = progress.add_task("judging", total=len(agent_runs))
+        for ar in agent_runs:
+            ar_row = db.get_agent_run(ar["id"])
+            if ar_row is None:
+                progress.update(overall, advance=1)
+                continue
+            tc_rows = db.get_tool_calls_for_agent_run(ar["id"])
+            state = agent_run_to_state(dict(ar_row), [dict(r) for r in tc_rows])
+            text = prompt_text.get(ar["prompt_id"], "")
+            judges_for: list[tuple[str, ChatFn]] = [
+                (name, jb.chat) for name, jb in judge_backends if name != ar["backend_name"]
+            ]
+            if judges_for:
+                db.clear_judge_scores(ar["id"])
+                panel = judge_panel(state=state, judges=judges_for, user_prompt=text)
+                for r in panel.reports:
+                    evidence = r.evidence()
+                    for axis, score in r.scores().items():
+                        db.insert_judge_score(
+                            agent_run_id=ar["id"],
+                            rubric=axis,
+                            judge_backend=r.model or "unknown",
+                            judge_model=r.model,
+                            score=score,
+                            evidence=evidence.get(axis, ""),
+                            raw_response=r.raw,
+                            latency_ms=r.latency_ms,
+                        )
+            progress.update(overall, advance=1)
+
+    console.print(_agent_summary(db, run_id, with_judges=True))
+    console.print(f"re-judged run_id={run_id}")
 
 
 @app.command("list")
@@ -602,6 +1074,27 @@ def validate(
     if prompts_file:
         ps = PromptSet.from_yaml(prompts_file)
         console.print(f"[green]ok[/green] prompts: {len(ps.prompts)} in set '{ps.name}'")
+        agent_prompts = [p for p in ps.prompts if p.agent is not None]
+        if agent_prompts:
+            console.print(f"[dim]agent cases: {len(agent_prompts)}[/dim]")
+        for p in agent_prompts:
+            if p.agent is None:
+                continue
+            fixture = p.agent.fixture
+            fixture_display = "-"
+            if fixture:
+                resolved = Path(fixture).resolve()
+                fixture_display = str(resolved)
+                if not resolved.exists():
+                    console.print(
+                        f"[yellow]warn[/yellow] agent case {p.id}: fixture not found: {resolved}"
+                    )
+                    warnings += 1
+                    continue
+            console.print(
+                f"[green]ok[/green] agent case: {p.id} fixture={fixture_display} "
+                f"tools=[{','.join(p.agent.tools)}] max_steps={p.agent.max_steps}"
+            )
     if backends_file:
         bs = BackendSet.from_yaml(backends_file)
         for b in bs.backends:

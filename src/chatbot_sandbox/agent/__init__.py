@@ -10,6 +10,7 @@ from ..backends.base import ChatResponse
 from .communication_tools import CommunicationStore
 from .driver import (
     ChatFn,
+    agent_run_to_state,
     build_system_prompt,
     grade_run,
     render_tool_for_native,
@@ -58,6 +59,7 @@ __all__ = [
     "ToolExecutor",
     "ToolRegistry",
     "ToolResult",
+    "agent_run_to_state",
     "build_system_prompt",
     "grade_agent",
     "grade_run",

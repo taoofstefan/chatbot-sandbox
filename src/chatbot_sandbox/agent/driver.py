@@ -27,8 +27,9 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
+from typing import Any
 
 from ..backends.base import ChatResponse
 from .sandbox import Sandbox
@@ -399,6 +400,66 @@ def run_state_to_dict(state: RunState) -> dict[str, object]:
     }
 
 
+def agent_run_to_state(
+    agent_run: Mapping[str, object],
+    tool_call_rows: list[Mapping[str, object]],
+) -> RunState:
+    """Reconstruct a `RunState` from persisted DB rows.
+
+    Used by ``cbs judge`` to re-run the judge panel against a stored audit
+    trail without re-executing the agent. Only the fields
+    `render_audit_for_judge` consumes are populated — `tool_calls`,
+    `final_answer`, `completed_normally`, `total_steps`, `error` — so
+    `messages` is left empty (it isn't needed for judging; the full message
+    log lives in `agent_runs.final_messages_json` if ever required).
+
+    `agent_runs` does not store an `error` column, so the reconstructed state
+    has `error=None`; the graders and judges handle that fine.
+
+    Args:
+        agent_run: An `agent_runs` row (Mapping with `final_answer`,
+            `total_steps`, `completed_normally` columns).
+        tool_call_rows: The `tool_calls` rows for that agent run, each with
+            `step_index`, `tool_name`, `arguments_json`, `result_json`,
+            `ok`, `error`, `duration_ms` columns.
+    """
+    def _as_int(v: object) -> int:
+        return int(v) if isinstance(v, (int, float)) else 0
+
+    def _as_str(v: object) -> str | None:
+        return v if isinstance(v, str) else None
+
+    def _as_json(v: object) -> Any:
+        if not isinstance(v, str) or not v:
+            return {}
+        loaded = json.loads(v)
+        return loaded if isinstance(loaded, dict) else {"_value": loaded}
+
+    tool_calls: list[ToolCallRecord] = []
+    for row in tool_call_rows:
+        args = _as_json(row["arguments_json"])
+        out = _as_json(row["result_json"])
+        tool_calls.append(
+            ToolCallRecord(
+                step_index=_as_int(row["step_index"]),
+                tool_name=str(row["tool_name"]),
+                arguments=args,
+                ok=bool(row["ok"]),
+                output=out,
+                error=_as_str(row["error"]),
+                duration_ms=_as_int(row["duration_ms"]),
+            )
+        )
+    return RunState(
+        messages=[],
+        tool_calls=tool_calls,
+        final_answer=_as_str(agent_run["final_answer"]),
+        completed_normally=bool(agent_run["completed_normally"]),
+        total_steps=_as_int(agent_run["total_steps"]),
+        error=None,
+    )
+
+
 def grade_run(
     state: RunState,
     validators: dict[str, object],
@@ -420,6 +481,7 @@ __all__ = [
     "ModelResponse",
     "RunState",
     "ToolCallRecord",
+    "agent_run_to_state",
     "build_system_prompt",
     "grade_run",
     "render_tool_for_native",

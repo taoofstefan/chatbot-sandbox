@@ -432,6 +432,20 @@ class Database:
                 (agent_run_id,),
             ).fetchall()
 
+    def clear_judge_scores(self, agent_run_id: int) -> int:
+        """Delete all judge_scores rows for an agent run.
+
+        ``judge_scores`` has no uniqueness constraint, so re-judging the same
+        agent run would otherwise append duplicate rows and skew the medians.
+        Returns the number of rows deleted.
+        """
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM judge_scores WHERE agent_run_id = ?",
+                (agent_run_id,),
+            )
+            return cur.rowcount or 0
+
     def get_agent_run_for_result(self, result_id: int) -> sqlite3.Row | None:
         """Find the agent_runs row whose prompt_id/backend matches this result."""
         with self.connect() as conn:

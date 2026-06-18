@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from .base import Backend, BackendError, RunResult
+from .base import Backend, BackendError, ChatResponse, RunResult
 
 
 class CommandBackend(Backend):
@@ -14,6 +14,8 @@ class CommandBackend(Backend):
     config.command must be a list, e.g. ["my-cli", "--quiet", "--format", "text"].
     config.model is recorded as the visible model name.
     """
+
+    supports_chat = True
 
     def run(self, prompt: str) -> RunResult:
         cmd = self.config.command
@@ -57,3 +59,35 @@ class CommandBackend(Backend):
             latency_ms=t.elapsed_ms,
             model=self.config.model,
         )
+
+    def chat(
+        self,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]] | None = None,
+    ) -> ChatResponse:
+        """Multi-turn chat via the configured command.
+
+        The command is run with the last user-message content on stdin, and
+        its stdout becomes the assistant message content. `tools` is ignored
+        — command backends can't do native function-calling, so callers drive
+        them in sentinel mode (the model's text is parsed for tool blocks /
+        ``<done/>`` by the driver). A run error is raised as `BackendError`,
+        which the agent driver records into `RunState.error`.
+
+        This makes the agent driver (and the LLM-judge panel) exercisable with
+        deterministic scripted commands and no network, reusing the same
+        ``type: command`` config the single-turn path already uses.
+        """
+        last_user = next(
+            (
+                m
+                for m in reversed(messages)
+                if isinstance(m, dict) and m.get("role") == "user"
+            ),
+            None,
+        )
+        prompt = str((last_user or {}).get("content", ""))
+        result = self.run(prompt)
+        if result.error:
+            raise BackendError(result.error)
+        return ChatResponse(content=result.output)
