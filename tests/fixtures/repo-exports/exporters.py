@@ -8,11 +8,15 @@ the button builder are correct as-is.
 from __future__ import annotations
 
 import json
+import csv
+from io import StringIO
 
 
 def export_csv(rows: list[list[str]]) -> str:
-    # KNOWN ISSUE: no quoting — fields with commas break the output.
-    return "\n".join(",".join(row) for row in rows)
+    buffer = StringIO(newline="")
+    writer = csv.writer(buffer, quoting=csv.QUOTE_MINIMAL)
+    writer.writerows(rows)
+    return buffer.getvalue().rstrip("\r\n")
 
 
 def export_json(rows: list[dict[str, object]]) -> str:

@@ -11,5 +11,4 @@ def parse_amount_safe(raw: str) -> int:
     Delegates to the legacy parser after normalizing input so the legacy
     comma bug never surfaces.
     """
-    # BUG: delegates without normalizing -> inherits the legacy comma bug.
-    return parse_amount(raw)
+    return parse_amount(raw.replace(",", ""))

@@ -18,11 +18,7 @@ def count_r_in_word(word: str) -> int:
     for ch in word:
         if ch == "r":
             count += 1
-        # BUG: this returns *before* the last character is checked.
-        # The original implementation had a return here, mistakenly
-        # placed during a refactor. The fix is to remove this early
-        # return.
-    return 0  # and this should be `return count`.
+    return count
 
 
 def count_total_letters(word: str) -> int:

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 8080
 DEFAULT_RETRIES = 3
+DEFAULT_TIMEOUT_MS = 5000
 
 
 @dataclass
@@ -19,6 +20,7 @@ class Config:
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     retries: int = DEFAULT_RETRIES
+    timeout_ms: int = DEFAULT_TIMEOUT_MS
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Config:
@@ -26,4 +28,5 @@ class Config:
             host=data.get("host", DEFAULT_HOST),
             port=data.get("port", DEFAULT_PORT),
             retries=data.get("retries", DEFAULT_RETRIES),
+            timeout_ms=data.get("timeout_ms", DEFAULT_TIMEOUT_MS),
         )
