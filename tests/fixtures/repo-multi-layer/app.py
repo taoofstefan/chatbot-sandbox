@@ -3,11 +3,9 @@ dispatched by handle_request. (A real app would use a web framework; this
 in-process router keeps the fixture dependency-free and runnable in the
 sandbox.)"""
 
-from __future__ import annotations
-
+import json
 from collections.abc import Callable
 from pathlib import Path
-import json
 
 INDEX_HTML_PATH = Path(__file__).parent / "index.html"
 
